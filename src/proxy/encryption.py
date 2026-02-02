@@ -5,12 +5,11 @@ Provides AES-256-GCM encryption for sensitive fields like passwords and API keys
 The encryption key is loaded from environment variable or secrets file.
 
 Key sources (in priority order):
-1. MAIL_PROXY_ENCRYPTION_KEY environment variable (base64-encoded)
+1. GENRO_PROXY_ENCRYPTION_KEY environment variable (base64-encoded)
 2. /run/secrets/encryption_key file (Docker/Kubernetes secrets)
-3. {instance_dir}/.encryption_key file (development only)
 
 Usage:
-    from tools.encryption import encrypt_value, decrypt_value
+    from proxy.encryption import encrypt_value, decrypt_value
 
     # Encrypt before storing
     encrypted = encrypt_value("my-secret-password")
@@ -63,18 +62,18 @@ def _get_key() -> bytes:
         return _encryption_key
 
     # 1. Environment variable (Kubernetes Secret / Docker env)
-    key_b64 = os.environ.get("MAIL_PROXY_ENCRYPTION_KEY")
+    key_b64 = os.environ.get("GENRO_PROXY_ENCRYPTION_KEY")
     if key_b64:
         try:
             _encryption_key = base64.b64decode(key_b64)
             if len(_encryption_key) != KEY_SIZE:
                 raise EncryptionError(
-                    f"MAIL_PROXY_ENCRYPTION_KEY must be {KEY_SIZE} bytes "
+                    f"GENRO_PROXY_ENCRYPTION_KEY must be {KEY_SIZE} bytes "
                     f"(got {len(_encryption_key)})"
                 )
             return _encryption_key
         except Exception as e:
-            raise EncryptionError(f"Invalid MAIL_PROXY_ENCRYPTION_KEY: {e}") from e
+            raise EncryptionError(f"Invalid GENRO_PROXY_ENCRYPTION_KEY: {e}") from e
 
     # 2. Docker/Kubernetes secrets file
     secrets_path = Path("/run/secrets/encryption_key")
@@ -86,7 +85,7 @@ def _get_key() -> bytes:
 
     # 3. No key configured
     raise EncryptionKeyNotConfigured(
-        "Encryption key not configured. Set MAIL_PROXY_ENCRYPTION_KEY environment "
+        "Encryption key not configured. Set GENRO_PROXY_ENCRYPTION_KEY environment "
         "variable (base64-encoded 32 bytes) or mount /run/secrets/encryption_key"
     )
 
@@ -95,7 +94,7 @@ def generate_key() -> str:
     """Generate a new random encryption key.
 
     Returns:
-        Base64-encoded 32-byte key suitable for MAIL_PROXY_ENCRYPTION_KEY.
+        Base64-encoded 32-byte key suitable for GENRO_PROXY_ENCRYPTION_KEY.
     """
     return base64.b64encode(secrets.token_bytes(KEY_SIZE)).decode()
 
@@ -291,10 +290,87 @@ def decrypt_value_with_key(encrypted: str, key: bytes) -> str:
         raise EncryptionError(f"Decryption failed: {e}") from e
 
 
+class EncryptionManager:
+    """Manager for encryption key loading and operations.
+
+    Loads encryption key from environment variable or secrets file.
+    Follows the parent=proxy pattern like other managers.
+
+    Attributes:
+        proxy: Parent proxy instance.
+        key: Loaded encryption key (32 bytes) or None.
+    """
+
+    def __init__(self, parent: "object", env_var: str = "PROXY_ENCRYPTION_KEY"):
+        """Initialize encryption manager.
+
+        Args:
+            parent: Proxy instance (provides context).
+            env_var: Environment variable name for base64-encoded key.
+        """
+        self.proxy = parent
+        self._env_var = env_var
+        self._key: bytes | None = None
+        self._load_key()
+
+    def _load_key(self) -> None:
+        """Load encryption key from environment or secrets file."""
+        # 1. Environment variable (base64-encoded)
+        key_b64 = os.environ.get(self._env_var)
+        if key_b64:
+            try:
+                key = base64.b64decode(key_b64)
+                if len(key) == KEY_SIZE:
+                    self._key = key
+                    return
+            except Exception:
+                pass
+
+        # 2. Docker/Kubernetes secrets file
+        secrets_path = Path("/run/secrets/encryption_key")
+        if secrets_path.exists():
+            try:
+                key = secrets_path.read_bytes().strip()
+                if len(key) == KEY_SIZE:
+                    self._key = key
+                    return
+            except Exception:
+                pass
+
+    @property
+    def key(self) -> bytes | None:
+        """Encryption key (32 bytes) or None if not configured."""
+        return self._key
+
+    @property
+    def is_configured(self) -> bool:
+        """True if encryption key is available."""
+        return self._key is not None
+
+    def set_key(self, key: bytes) -> None:
+        """Set encryption key programmatically (for testing)."""
+        if len(key) != KEY_SIZE:
+            raise ValueError(f"Encryption key must be {KEY_SIZE} bytes")
+        self._key = key
+
+    def encrypt(self, plaintext: str) -> str:
+        """Encrypt a value using the configured key."""
+        if self._key is None:
+            raise EncryptionKeyNotConfigured("Encryption key not configured")
+        return encrypt_value_with_key(plaintext, self._key)
+
+    def decrypt(self, encrypted: str) -> str:
+        """Decrypt a value using the configured key."""
+        if self._key is None:
+            raise EncryptionKeyNotConfigured("Encryption key not configured")
+        return decrypt_value_with_key(encrypted, self._key)
+
+
 __all__ = [
     "ENCRYPTED_PREFIX",
     "EncryptionError",
     "EncryptionKeyNotConfigured",
+    "EncryptionManager",
     "decrypt_value",
     "decrypt_value_with_key",
     "encrypt_value",

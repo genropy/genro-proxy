@@ -1,10 +1,10 @@
 # Copyright 2025 Softwell S.r.l. - SPDX-License-Identifier: Apache-2.0
-"""Tests for tools.prometheus.metrics module."""
+"""Tests for prometheus.metrics module."""
 
 import pytest
 from prometheus_client import CollectorRegistry
 
-from proxy.tools.prometheus.metrics import MailMetrics
+from proxy.prometheus.metrics import MailMetrics
 
 
 @pytest.fixture

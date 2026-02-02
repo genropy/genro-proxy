@@ -1,0 +1,37 @@
+# Copyright 2025 Softwell S.r.l. - SPDX-License-Identifier: Apache-2.0
+#
+# Docker Compose for genro-proxy development and testing.
+#
+# Usage:
+#   # Start PostgreSQL for tests:
+#   docker compose up -d
+#
+#   # Run tests with PostgreSQL:
+#   pytest tests/sql/
+#
+#   # Stop and cleanup:
+#   docker compose down -v
+#
+# Connection: postgresql://proxy:testpassword@localhost:5433/proxy
+
+services:
+  # ============================================
+  # PostgreSQL for testing
+  # ============================================
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: proxy
+      POSTGRES_PASSWORD: testpassword
+      POSTGRES_DB: proxy
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U proxy"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:

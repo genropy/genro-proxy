@@ -24,12 +24,14 @@ Example:
 
     Generated commands::
 
-        myservice accounts list --active-only
+        myservice accounts list                    # uses context tenant
+        myservice accounts list acme               # explicit tenant
         myservice accounts add main --host smtp.example.com
         myservice tenants list
 
 Note:
-    - Required params become positional arguments
+    - tenant_id is special: optional positional with context fallback
+    - Other required params become positional arguments
     - Optional params become --options
     - Boolean params become --flag/--no-flag toggles
     - Method underscores become dashes (add_batch → add-batch)
@@ -39,11 +41,37 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json
 from collections.abc import Callable
 from typing import Any, Literal, get_args, get_origin
 
 import click
+from rich.console import Console
+from rich.table import Table
+
+console = Console()
+
+
+def _print_result(result: Any) -> None:
+    """Print command result with rich formatting."""
+    if isinstance(result, list) and result and isinstance(result[0], dict):
+        # List of dicts → table
+        table = Table(show_header=True, header_style="bold cyan")
+        keys = list(result[0].keys())
+        for key in keys:
+            table.add_column(key)
+        for row in result:
+            table.add_row(*[str(row.get(k, "")) for k in keys])
+        console.print(table)
+    elif isinstance(result, dict):
+        # Single dict → key: value pairs
+        for key, value in result.items():
+            console.print(f"[bold]{key}:[/bold] {value}")
+    elif isinstance(result, list):
+        # Simple list
+        for item in result:
+            console.print(f"  • {item}")
+    else:
+        console.print(result)
 
 
 def _annotation_to_click_type(annotation: Any) -> type | click.Choice:
@@ -91,12 +119,19 @@ def _create_click_command(method: Callable, run_async: Callable) -> click.Comman
 
     Returns:
         Click command ready to be added to a group.
+
+    Note:
+        tenant_id is treated specially: it becomes an optional positional
+        argument with fallback to the current context (via require_context).
     """
+    from .cli_context import require_context
+
     sig = inspect.signature(method)
     doc = method.__doc__ or f"{method.__name__} operation"
 
     options = []
     arguments = []
+    has_tenant_id = False
 
     for param_name, param in sig.parameters.items():
         if param_name == "self":
@@ -108,7 +143,13 @@ def _create_click_command(method: Callable, run_async: Callable) -> click.Comman
 
         cli_name = param_name.replace("_", "-")
 
-        if is_bool:
+        # Special case: required tenant_id becomes optional positional with context fallback
+        if param_name == "tenant_id" and not has_default:
+            has_tenant_id = True
+            arguments.append(
+                click.argument("tenant_id", type=click_type, required=False, default=None)
+            )
+        elif is_bool:
             options.append(
                 click.option(
                     f"--{cli_name}/--no-{cli_name}",
@@ -131,20 +172,23 @@ def _create_click_command(method: Callable, run_async: Callable) -> click.Comman
 
     def cmd_func(**kwargs: Any) -> None:
         py_kwargs = {k.replace("-", "_"): v for k, v in kwargs.items()}
+
+        # Resolve tenant_id from context if not provided
+        if has_tenant_id and not py_kwargs.get("tenant_id"):
+            _, tenant = require_context(require_tenant=True)
+            py_kwargs["tenant_id"] = tenant
+
         result = run_async(method(**py_kwargs))
         if result is not None:
-            if isinstance(result, (dict, list)):
-                click.echo(json.dumps(result, indent=2, default=str))
-            else:
-                click.echo(result)
+            _print_result(result)
 
-    cmd_func = click.command(help=doc)(cmd_func)
+    cmd: click.Command = click.command(help=doc)(cmd_func)
     for opt in reversed(options):
-        cmd_func = opt(cmd_func)
+        cmd = opt(cmd)
     for arg in reversed(arguments):
-        cmd_func = arg(cmd_func)
+        cmd = arg(cmd)
 
-    return cmd_func
+    return cmd
 
 
 def register_endpoint(
@@ -205,4 +249,54 @@ def register_endpoint(
     return endpoint_group
 
 
-__all__ = ["register_endpoint"]
+class CliManager:
+    """Manager for Click CLI application. Creates CLI lazily on first access."""
+
+    def __init__(self, parent: Any):
+        self.proxy = parent
+        self._cli: click.Group | None = None
+
+    @property
+    def cli(self) -> click.Group:
+        """Lazy-create Click CLI group."""
+        if self._cli is None:
+            self._cli = self._create_cli()
+        return self._cli
+
+    def _create_cli(self) -> click.Group:
+        """Build Click CLI: endpoint commands + service commands."""
+
+        @click.group()
+        @click.version_option()
+        def cli() -> None:
+            """Genro Proxy service."""
+            pass
+
+        # Register endpoint-based commands
+        for endpoint in self.proxy.endpoints.values():
+            register_endpoint(cli, endpoint)
+
+        # Add serve command
+        @cli.command("serve")
+        @click.option("--host", default="0.0.0.0", help="Bind host")
+        @click.option("--port", "-p", default=self.proxy.config.port, help="Bind port")
+        @click.option("--reload", is_flag=True, help="Enable auto-reload")
+        def serve_cmd(host: str, port: int, reload: bool) -> None:
+            """Start the API server."""
+            import uvicorn
+
+            uvicorn.run(
+                self._get_server_module(),
+                host=host,
+                port=port,
+                reload=reload,
+            )
+
+        return cli
+
+    def _get_server_module(self) -> str:
+        """Get the server module path for uvicorn. Override in subclass."""
+        return "proxy.server:app"
+
+
+__all__ = ["CliManager", "console", "register_endpoint"]

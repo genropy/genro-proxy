@@ -250,3 +250,294 @@ class TestInstanceEndpointUpgradeToEE:
         assert result["ok"] is True
         assert result["edition"] == "ee"
         mock_table.set_edition.assert_called_once_with("ee")
+
+
+class TestInstanceEndpointListAll:
+    """Tests for InstanceEndpoint.list_all() method."""
+
+    async def test_list_all_empty_dir(self, endpoint, tmp_path, monkeypatch):
+        """list_all() returns empty list when no instances."""
+        monkeypatch.setattr(endpoint, "_get_base_dir", lambda: tmp_path)
+        result = await endpoint.list_all()
+        assert result["ok"] is True
+        assert result["instances"] == []
+
+    async def test_list_all_nonexistent_dir(self, endpoint, tmp_path, monkeypatch):
+        """list_all() returns empty when base dir doesn't exist."""
+        monkeypatch.setattr(endpoint, "_get_base_dir", lambda: tmp_path / "nonexistent")
+        result = await endpoint.list_all()
+        assert result["ok"] is True
+        assert result["instances"] == []
+
+    async def test_list_all_with_config(self, endpoint, tmp_path, monkeypatch):
+        """list_all() finds instance with config.ini."""
+        monkeypatch.setattr(endpoint, "_get_base_dir", lambda: tmp_path)
+
+        # Create instance directory with config
+        inst_dir = tmp_path / "test-instance"
+        inst_dir.mkdir()
+        config_file = inst_dir / "config.ini"
+        config_file.write_text("""
+[server]
+name = test-instance
+host = 127.0.0.1
+port = 8001
+
+[database]
+path = /tmp/test.db
+""")
+
+        result = await endpoint.list_all()
+        assert result["ok"] is True
+        assert len(result["instances"]) == 1
+        assert result["instances"][0]["name"] == "test-instance"
+        assert result["instances"][0]["port"] == 8001
+        assert result["instances"][0]["host"] == "127.0.0.1"
+        assert result["instances"][0]["running"] is False
+
+    async def test_list_all_with_db_only(self, endpoint, tmp_path, monkeypatch):
+        """list_all() finds legacy instance with only database."""
+        monkeypatch.setattr(endpoint, "_get_base_dir", lambda: tmp_path)
+
+        # Create instance directory with only database
+        inst_dir = tmp_path / "legacy-instance"
+        inst_dir.mkdir()
+        (inst_dir / "data.db").touch()
+
+        result = await endpoint.list_all()
+        assert result["ok"] is True
+        assert len(result["instances"]) == 1
+        assert result["instances"][0]["name"] == "legacy-instance"
+        assert result["instances"][0]["port"] == 8000  # default
+
+    async def test_list_all_skips_empty_dirs(self, endpoint, tmp_path, monkeypatch):
+        """list_all() skips directories without config or database."""
+        monkeypatch.setattr(endpoint, "_get_base_dir", lambda: tmp_path)
+
+        # Create empty directory
+        (tmp_path / "empty-dir").mkdir()
+        # Create directory with random file
+        random_dir = tmp_path / "random-dir"
+        random_dir.mkdir()
+        (random_dir / "random.txt").touch()
+
+        result = await endpoint.list_all()
+        assert result["ok"] is True
+        assert result["instances"] == []
+
+
+class TestInstanceEndpointStop:
+    """Tests for InstanceEndpoint.stop() method."""
+
+    async def test_stop_not_running(self, endpoint, tmp_path, monkeypatch):
+        """stop() returns error when instance not running."""
+        monkeypatch.setattr(endpoint, "_get_base_dir", lambda: tmp_path)
+        monkeypatch.setattr(endpoint, "_is_instance_running", lambda name: (False, None, None))
+
+        result = await endpoint.stop(name="test-instance")
+        assert result["ok"] is False
+        assert "not running" in result["error"]
+
+    async def test_stop_all_none_running(self, endpoint, tmp_path, monkeypatch):
+        """stop('*') returns empty list when none running."""
+        monkeypatch.setattr(endpoint, "_get_base_dir", lambda: tmp_path)
+
+        result = await endpoint.stop(name="*")
+        assert result["ok"] is True
+        assert result["stopped"] == []
+        assert result["count"] == 0
+
+
+class TestInstanceEndpointRestart:
+    """Tests for InstanceEndpoint.restart() method."""
+
+    async def test_restart_not_running(self, endpoint, tmp_path, monkeypatch):
+        """restart() returns error when instance not running."""
+        monkeypatch.setattr(endpoint, "_get_base_dir", lambda: tmp_path)
+        monkeypatch.setattr(endpoint, "_is_instance_running", lambda name: (False, None, None))
+
+        result = await endpoint.restart(name="test-instance")
+        assert result["ok"] is False
+
+    async def test_restart_all_none_running(self, endpoint, tmp_path, monkeypatch):
+        """restart('*') returns empty when none running."""
+        monkeypatch.setattr(endpoint, "_get_base_dir", lambda: tmp_path)
+
+        result = await endpoint.restart(name="*")
+        assert result["ok"] is True
+        assert result["stopped"] == []
+
+
+class TestInstanceEndpointHelpers:
+    """Tests for private helper methods."""
+
+    def test_get_instance_dir(self, endpoint):
+        """_get_instance_dir() returns correct path."""
+        path = endpoint._get_instance_dir("myinstance")
+        assert path.name == "myinstance"
+        assert ".gproxy" in str(path)
+
+    def test_get_pid_file(self, endpoint):
+        """_get_pid_file() returns correct path."""
+        path = endpoint._get_pid_file("myinstance")
+        assert path.name == "server.pid"
+
+    def test_get_config_file(self, endpoint):
+        """_get_config_file() returns correct path."""
+        path = endpoint._get_config_file("myinstance")
+        assert path.name == "config.ini"
+
+    def test_read_instance_config_missing(self, endpoint, tmp_path, monkeypatch):
+        """_read_instance_config() returns None for missing config."""
+        monkeypatch.setattr(endpoint, "_get_base_dir", lambda: tmp_path)
+        result = endpoint._read_instance_config("nonexistent")
+        assert result is None
+
+    def test_is_instance_running_no_pid_file(self, endpoint, tmp_path, monkeypatch):
+        """_is_instance_running() returns False when no PID file."""
+        monkeypatch.setattr(endpoint, "_get_base_dir", lambda: tmp_path)
+        running, pid, port = endpoint._is_instance_running("test")
+        assert running is False
+        assert pid is None
+        assert port is None
+
+    def test_write_pid_file(self, endpoint, tmp_path, monkeypatch):
+        """_write_pid_file() creates PID file with correct content."""
+        monkeypatch.setattr(endpoint, "_get_base_dir", lambda: tmp_path)
+        endpoint._write_pid_file("test-instance", 12345, 8000, "127.0.0.1")
+
+        pid_file = tmp_path / "test-instance" / "server.pid"
+        assert pid_file.exists()
+
+        import json
+        data = json.loads(pid_file.read_text())
+        assert data["pid"] == 12345
+        assert data["port"] == 8000
+        assert data["host"] == "127.0.0.1"
+        assert "started_at" in data
+
+    def test_ensure_instance_config_creates_new(self, endpoint, tmp_path, monkeypatch):
+        """_ensure_instance_config() creates config for new instance."""
+        monkeypatch.setattr(endpoint, "_get_base_dir", lambda: tmp_path)
+        config = endpoint._ensure_instance_config("new-instance", 8080, "0.0.0.0")
+
+        assert config["name"] == "new-instance"
+        assert config["port"] == 8080
+        assert config["host"] == "0.0.0.0"
+
+        config_file = tmp_path / "new-instance" / "config.ini"
+        assert config_file.exists()
+
+    def test_ensure_instance_config_preserves_existing(self, endpoint, tmp_path, monkeypatch):
+        """_ensure_instance_config() doesn't overwrite existing config."""
+        monkeypatch.setattr(endpoint, "_get_base_dir", lambda: tmp_path)
+
+        # Create existing config
+        inst_dir = tmp_path / "existing-instance"
+        inst_dir.mkdir()
+        config_file = inst_dir / "config.ini"
+        config_file.write_text("""
+[server]
+name = existing-instance
+host = 192.168.1.1
+port = 9000
+
+[database]
+path = /custom/path/data.db
+""")
+
+        config = endpoint._ensure_instance_config("existing-instance", 8080, "0.0.0.0")
+
+        # Should return existing config, not override with new values
+        assert config["name"] == "existing-instance"
+        assert config["port"] == 9000
+        assert config["host"] == "192.168.1.1"
+
+
+class TestInstanceEndpointServe:
+    """Tests for InstanceEndpoint.serve() method."""
+
+    async def test_serve_already_running(self, endpoint, tmp_path, monkeypatch):
+        """serve() returns info when instance already running."""
+        monkeypatch.setattr(endpoint, "_get_base_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            endpoint, "_is_instance_running",
+            lambda name: (True, 12345, 8000)
+        )
+
+        result = await endpoint.serve(name="test-instance")
+        assert result["ok"] is True
+        assert result["already_running"] is True
+        assert result["pid"] == 12345
+        assert result["port"] == 8000
+
+    async def test_serve_new_instance(self, endpoint, tmp_path, monkeypatch):
+        """serve() creates new instance config."""
+        monkeypatch.setattr(endpoint, "_get_base_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            endpoint, "_is_instance_running",
+            lambda name: (False, None, None)
+        )
+
+        result = await endpoint.serve(name="new-instance", port=8080, host="127.0.0.1")
+        assert result["ok"] is True
+        assert result["name"] == "new-instance"
+        assert result["port"] == 8080
+        assert result["host"] == "127.0.0.1"
+        assert "env" in result
+        assert result["env"]["GENRO_PROXY_PORT"] == "8080"
+
+    async def test_serve_existing_instance(self, endpoint, tmp_path, monkeypatch):
+        """serve() uses existing instance config."""
+        monkeypatch.setattr(endpoint, "_get_base_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            endpoint, "_is_instance_running",
+            lambda name: (False, None, None)
+        )
+
+        # Create existing config
+        inst_dir = tmp_path / "existing"
+        inst_dir.mkdir()
+        config_file = inst_dir / "config.ini"
+        config_file.write_text("""
+[server]
+name = existing
+host = 192.168.1.1
+port = 9000
+
+[database]
+path = /custom/path/data.db
+""")
+
+        result = await endpoint.serve(name="existing")
+        assert result["ok"] is True
+        assert result["port"] == 9000
+        assert result["host"] == "192.168.1.1"
+
+    async def test_serve_override_existing_config(self, endpoint, tmp_path, monkeypatch):
+        """serve() allows overriding existing config values."""
+        monkeypatch.setattr(endpoint, "_get_base_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            endpoint, "_is_instance_running",
+            lambda name: (False, None, None)
+        )
+
+        # Create existing config
+        inst_dir = tmp_path / "override-test"
+        inst_dir.mkdir()
+        config_file = inst_dir / "config.ini"
+        config_file.write_text("""
+[server]
+name = override-test
+host = 192.168.1.1
+port = 9000
+
+[database]
+path = /custom/path/data.db
+""")
+
+        # Override port and host
+        result = await endpoint.serve(name="override-test", port=7000, host="0.0.0.0")
+        assert result["ok"] is True
+        assert result["port"] == 7000
+        assert result["host"] == "0.0.0.0"

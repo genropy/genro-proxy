@@ -270,7 +270,7 @@ class Table:
         if key is None:
             return data
 
-        from tools.encryption import encrypt_value_with_key
+        from proxy.encryption import encrypt_value_with_key
 
         result = dict(data)
         for col_name in encrypted_cols:
@@ -294,7 +294,7 @@ class Table:
         if key is None:
             return row
 
-        from tools.encryption import decrypt_value_with_key
+        from proxy.encryption import decrypt_value_with_key
 
         result = dict(row)
         for col_name in encrypted_cols:

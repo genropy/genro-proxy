@@ -320,7 +320,7 @@ class TestTableEncryption:
     async def test_encrypted_field_with_key(self, pg_db):
         """Encrypted fields are encrypted/decrypted with key."""
         # Set encryption key on proxy
-        pg_db.parent.set_encryption_key(b"0" * 32)
+        pg_db.parent.encryption.set_key(b"0" * 32)
 
         table = TestTable(pg_db)
         await table.create_schema()
@@ -338,7 +338,7 @@ class TestTableEncryption:
     async def test_encrypted_field_without_key(self, pg_db):
         """Without encryption key, values stored as plaintext."""
         # Ensure no encryption key
-        pg_db.parent._encryption_key = None
+        pg_db.parent.encryption._key = None
 
         table = TestTable(pg_db)
         await table.create_schema()
@@ -351,7 +351,7 @@ class TestTableEncryption:
     async def test_encrypted_field_decryption_failure(self, pg_db):
         """Decryption failure returns encrypted value."""
         # Set key, insert, then change key
-        pg_db.parent.set_encryption_key(b"1" * 32)
+        pg_db.parent.encryption.set_key(b"1" * 32)
 
         table = TestTable(pg_db)
         await table.create_schema()
@@ -359,7 +359,7 @@ class TestTableEncryption:
         await table.insert({"pk": "enc-fail", "name": "Will Fail", "secret": "secret"})
 
         # Change key
-        pg_db.parent.set_encryption_key(b"2" * 32)
+        pg_db.parent.encryption.set_key(b"2" * 32)
 
         # Should return encrypted value (not raise)
         result = await table.select_one(where={"pk": "enc-fail"})
@@ -416,8 +416,9 @@ class TestRecordUpdater:
         # Use accounts table which has composite key
         accounts = pg_db.table("accounts")
 
-        await pg_db.table("tenants").add({"id": "t1", "name": "Test"})
-        await accounts.add({
+        await pg_db.table("tenants").insert({"id": "t1", "name": "Test", "active": 1})
+        await accounts.insert({
+            "pk": "pk-acc1",
             "id": "acc1",
             "tenant_id": "t1",
             "host": "smtp.test.com",
@@ -427,7 +428,7 @@ class TestRecordUpdater:
         async with accounts.record({"tenant_id": "t1", "id": "acc1"}) as rec:
             rec["host"] = "smtp.updated.com"
 
-        result = await accounts.get("t1", "acc1")
+        result = await accounts.select_one(where={"tenant_id": "t1", "id": "acc1"})
         assert result["host"] == "smtp.updated.com"
 
     async def test_record_without_for_update(self, pg_db):

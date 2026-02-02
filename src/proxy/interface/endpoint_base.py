@@ -36,9 +36,12 @@ import importlib
 import inspect
 import pkgutil
 from collections.abc import Callable
-from typing import Any, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Any, get_origin, get_type_hints
 
 from pydantic import create_model
+
+if TYPE_CHECKING:
+    from proxy.proxy_base import ProxyBase
 
 
 def POST(method: Callable) -> Callable:
@@ -343,4 +346,135 @@ class BaseEndpoint:
         return None
 
 
-__all__ = ["BaseEndpoint", "POST"]
+class EndpointManager:
+    """Manager for endpoint discovery and instantiation.
+
+    Holds reference to proxy and manages all endpoint instances.
+    Provides dict-like access to endpoints by name.
+
+    Attributes:
+        proxy: Parent proxy instance (access db via proxy.db).
+        _endpoints: Internal dict of endpoint instances.
+    """
+
+    def __init__(self, parent: "ProxyBase"):
+        """Initialize manager with proxy reference.
+
+        Args:
+            parent: Proxy instance (provides access to db).
+        """
+        self.proxy = parent
+        self._endpoints: dict[str, BaseEndpoint] = {}
+
+    def discover(self, *packages: str, ee_packages: list[str] | None = None) -> list[BaseEndpoint]:
+        """Discover and instantiate endpoints from entity packages.
+
+        Args:
+            *packages: CE packages to scan for endpoints.
+            ee_packages: Optional EE packages for mixin composition.
+
+        Returns:
+            List of instantiated endpoint instances.
+        """
+        ee_package = ee_packages[0] if ee_packages else None
+
+        for package in packages:
+            ce_modules = self._find_entity_modules(package, "endpoint")
+            ee_modules = self._find_entity_modules(ee_package, "endpoint_ee") if ee_package else {}
+
+            for entity_name, ce_module in ce_modules.items():
+                ce_class = self._get_class_from_module(ce_module, "Endpoint")
+                if not ce_class:
+                    continue
+
+                ee_module = ee_modules.get(entity_name)
+                endpoint_class = ce_class
+                if ee_module:
+                    ee_mixin = self._get_ee_mixin_from_module(ee_module, "_EE")
+                    if ee_mixin:
+                        endpoint_class = type(
+                            ce_class.__name__, (ee_mixin, ce_class), {"__module__": ce_class.__module__}
+                        )
+
+                # Instantiate endpoint with table from db
+                table = self.proxy.db.table(endpoint_class.name)
+                endpoint = endpoint_class(table)
+                self._endpoints[endpoint_class.name] = endpoint
+
+        return list(self._endpoints.values())
+
+    def _find_entity_modules(self, base_package: str | None, module_name: str) -> dict[str, Any]:
+        """Find entity modules in a package."""
+        result: dict[str, Any] = {}
+        if not base_package:
+            return result
+        try:
+            package = importlib.import_module(base_package)
+        except ImportError:
+            return result
+
+        package_path = getattr(package, "__path__", None)
+        if not package_path:
+            return result
+
+        for _, name, is_pkg in pkgutil.iter_modules(package_path):
+            if not is_pkg:
+                continue
+            full_module_name = f"{base_package}.{name}.{module_name}"
+            try:
+                module = importlib.import_module(full_module_name)
+                result[name] = module
+            except ImportError:
+                pass
+        return result
+
+    def _get_class_from_module(self, module: Any, class_suffix: str) -> type | None:
+        """Extract a class from module by suffix pattern."""
+        for attr_name in dir(module):
+            if attr_name.startswith("_"):
+                continue
+            obj = getattr(module, attr_name)
+            if isinstance(obj, type) and attr_name.endswith(class_suffix):
+                if "_EE" in attr_name or "Mixin" in attr_name:
+                    continue
+                if attr_name in ("BaseEndpoint", "Endpoint"):
+                    continue
+                if not hasattr(obj, "name"):
+                    continue
+                return obj
+        return None
+
+    def _get_ee_mixin_from_module(self, module: Any, class_suffix: str) -> type | None:
+        """Extract an EE mixin class from module."""
+        for name in dir(module):
+            if name.startswith("_"):
+                continue
+            obj = getattr(module, name)
+            if isinstance(obj, type) and name.endswith(class_suffix):
+                return obj
+        return None
+
+    def __getitem__(self, name: str) -> BaseEndpoint:
+        """Get endpoint by name."""
+        if name not in self._endpoints:
+            raise KeyError(f"Endpoint '{name}' not found")
+        return self._endpoints[name]
+
+    def __contains__(self, name: str) -> bool:
+        """Check if endpoint exists."""
+        return name in self._endpoints
+
+    def __iter__(self):
+        """Iterate over endpoint names."""
+        return iter(self._endpoints)
+
+    def values(self):
+        """Return endpoint instances."""
+        return self._endpoints.values()
+
+    def items(self):
+        """Return (name, endpoint) pairs."""
+        return self._endpoints.items()
+
+
+__all__ = ["BaseEndpoint", "EndpointManager", "POST"]

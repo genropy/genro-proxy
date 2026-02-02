@@ -1,5 +1,5 @@
 # Copyright 2025 Softwell S.r.l. - SPDX-License-Identifier: Apache-2.0
-"""Base FastAPI application factory with UI serving."""
+"""FastAPI application manager with UI serving."""
 
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,18 +13,11 @@ if TYPE_CHECKING:
     from proxy.proxy_base import ProxyBase  # noqa: F401
 
 
-class ApiBase:
-    """Base class for FastAPI application factory.
+class ApiManager:
+    """Manager for FastAPI application. Creates app lazily on first access."""
 
-    Provides:
-    - FastAPI app creation with lifespan management
-    - Static file serving for UI
-    - Health endpoint
-    - API router mounting
-    """
-
-    def __init__(self, proxy: "ProxyBase"):
-        self.proxy = proxy
+    def __init__(self, parent: "ProxyBase"):
+        self.proxy = parent
         self._app: FastAPI | None = None
 
     @property

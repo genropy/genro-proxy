@@ -5,7 +5,7 @@ Provides decorators and wrappers to protect sensitive methods/attributes
 from being accessed in interactive REPL sessions.
 
 Usage:
-    from tools.repl import reserved, repl_wrap
+    from proxy.interface.repl import reserved, repl_wrap
 
     class MyService:
         @reserved

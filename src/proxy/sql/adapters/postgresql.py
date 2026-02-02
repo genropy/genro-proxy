@@ -24,9 +24,10 @@ class PostgresAdapter(DbAdapter):
         """Return SQL definition for autoincrement primary key column (PostgreSQL)."""
         return f'"{name}" SERIAL PRIMARY KEY'
 
-    def __init__(self, dsn: str, pool_size: int = 10):
+    def __init__(self, dsn: str, pool_size: int = 10, connect_timeout: float = 10.0):
         self.dsn = dsn
         self.pool_size = pool_size
+        self.connect_timeout = connect_timeout
         self._pool: Any = None
 
         # Verify psycopg is available at init time
@@ -35,7 +36,7 @@ class PostgresAdapter(DbAdapter):
         except ImportError as e:
             raise ImportError(
                 "PostgreSQL support requires psycopg. "
-                "Install with: pip install genro-mail-proxy[postgresql]"
+                "Install with: pip install genro-proxy[postgresql]"
             ) from e
 
     def _convert_placeholders(self, query: str) -> str:
@@ -46,11 +47,17 @@ class PostgresAdapter(DbAdapter):
         return re.sub(r"(?<!:):([a-zA-Z_][a-zA-Z0-9_]*)", r"%(\1)s", query)
 
     async def connect(self) -> None:
-        """Establish connection pool.
+        """Establish connection pool with timeout.
 
         Sets search_path to 'public' schema to ensure tables are created
         in a valid schema even when the connection default is unset.
+
+        Raises:
+            TimeoutError: If connection cannot be established within timeout.
+            Exception: If authentication or other connection error occurs.
         """
+        import asyncio
+
         from psycopg_pool import AsyncConnectionPool
 
         # Configure connection to use 'public' schema by default
@@ -65,7 +72,23 @@ class PostgresAdapter(DbAdapter):
             open=False,
             configure=configure,
         )
-        await self._pool.open()
+        try:
+            # Open pool and verify connection works (check=True)
+            await asyncio.wait_for(
+                self._pool.open(wait=True, timeout=self.connect_timeout),
+                timeout=self.connect_timeout + 1,
+            )
+        except asyncio.TimeoutError:
+            await self._pool.close()
+            self._pool = None
+            raise TimeoutError(
+                f"PostgreSQL connection timed out after {self.connect_timeout}s. "
+                "Check credentials and server availability."
+            ) from None
+        except Exception as e:
+            await self._pool.close()
+            self._pool = None
+            raise ConnectionError(f"PostgreSQL connection failed: {e}") from e
 
     async def close(self) -> None:
         """Close connection pool."""

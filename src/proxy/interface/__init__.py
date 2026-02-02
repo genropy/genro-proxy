@@ -6,6 +6,7 @@ This package provides base classes for building proxy service interfaces:
 - endpoint_base: BaseEndpoint for entity operations with introspection
 - api_base: FastAPI application factory
 - cli_base: Click CLI command generation
+- cli_context: CLI context management for instance/tenant resolution
 
 Example:
     ::
@@ -23,7 +24,24 @@ Example:
                 return await self.table.add({"id": id, "name": name})
 """
 
-from .cli_base import register_endpoint
-from .endpoint_base import POST, BaseEndpoint
+from .api_base import ApiManager
+from .cli_base import CliManager, console, register_endpoint
+from .cli_context import CliContext, require_context, resolve_context
+from .endpoint_base import POST, BaseEndpoint, EndpointManager
+from .repl import REPLWrapper, repl_wrap, reserved
 
-__all__ = ["BaseEndpoint", "POST", "register_endpoint"]
+__all__ = [
+    "ApiManager",
+    "BaseEndpoint",
+    "CliContext",
+    "CliManager",
+    "EndpointManager",
+    "POST",
+    "REPLWrapper",
+    "console",
+    "register_endpoint",
+    "repl_wrap",
+    "require_context",
+    "reserved",
+    "resolve_context",
+]
