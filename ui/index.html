@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Genro Proxy Admin</title>
+
+    <!-- Shoelace -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.12.0/cdn/themes/light.css" />
+    <script type="module" src="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.12.0/cdn/shoelace-autoloader.js"></script>
+
+    <style>
+        :root {
+            --header-height: 50px;
+            --sidebar-width: 250px;
+            --panel-gap: 1rem;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: var(--sl-font-sans);
+            background: var(--sl-color-neutral-50);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        header {
+            height: var(--header-height);
+            background: var(--sl-color-primary-600);
+            color: white;
+            display: flex;
+            align-items: center;
+            padding: 0 1rem;
+            gap: 1rem;
+        }
+
+        header h1 {
+            font-size: 1.2rem;
+            font-weight: 500;
+        }
+
+        /* Main layout */
+        .main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* Sidebar - Tenants */
+        .sidebar {
+            width: var(--sidebar-width);
+            background: white;
+            border-right: 1px solid var(--sl-color-neutral-200);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 1rem;
+            border-bottom: 1px solid var(--sl-color-neutral-200);
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .tenant-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0.5rem;
+        }
+
+        .tenant-item {
+            padding: 0.75rem 1rem;
+            border-radius: var(--sl-border-radius-medium);
+            cursor: pointer;
+            margin-bottom: 0.25rem;
+            transition: background 0.2s;
+        }
+
+        .tenant-item:hover {
+            background: var(--sl-color-neutral-100);
+        }
+
+        .tenant-item.selected {
+            background: var(--sl-color-primary-100);
+            color: var(--sl-color-primary-700);
+        }
+
+        .tenant-item .tenant-name {
+            font-weight: 500;
+        }
+
+        .tenant-item .tenant-id {
+            font-size: 0.8rem;
+            color: var(--sl-color-neutral-500);
+        }
+
+        /* Content area */
+        .content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: var(--panel-gap);
+            gap: var(--panel-gap);
+            overflow-y: auto;
+        }
+
+        /* Tenant info panel */
+        .tenant-info {
+            background: white;
+            border-radius: var(--sl-border-radius-large);
+            padding: 1.5rem;
+            box-shadow: var(--sl-shadow-small);
+        }
+
+        .tenant-info h2 {
+            margin-bottom: 1rem;
+            font-size: 1.1rem;
+            color: var(--sl-color-neutral-700);
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+
+        .info-item label {
+            display: block;
+            font-size: 0.8rem;
+            color: var(--sl-color-neutral-500);
+            margin-bottom: 0.25rem;
+        }
+
+        .info-item .value {
+            font-weight: 500;
+        }
+
+        /* Lists container */
+        .lists-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: var(--panel-gap);
+            flex: 1;
+            min-height: 0;
+        }
+
+        /* List panel */
+        .list-panel {
+            background: white;
+            border-radius: var(--sl-border-radius-large);
+            box-shadow: var(--sl-shadow-small);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .list-panel-header {
+            padding: 1rem;
+            border-bottom: 1px solid var(--sl-color-neutral-200);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .list-panel-header h3 {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .list-content {
+            flex: 1;
+            overflow-y: auto;
+            min-height: 150px;
+        }
+
+        .list-item {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--sl-color-neutral-100);
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .list-item:hover {
+            background: var(--sl-color-neutral-50);
+        }
+
+        .list-item.selected {
+            background: var(--sl-color-primary-50);
+            border-left: 3px solid var(--sl-color-primary-600);
+        }
+
+        .list-item .item-name {
+            font-weight: 500;
+        }
+
+        .list-item .item-meta {
+            font-size: 0.8rem;
+            color: var(--sl-color-neutral-500);
+        }
+
+        /* Detail panel */
+        .detail-panel {
+            background: var(--sl-color-neutral-50);
+            border-top: 1px solid var(--sl-color-neutral-200);
+            padding: 1rem;
+            min-height: 120px;
+        }
+
+        .detail-panel h4 {
+            font-size: 0.9rem;
+            color: var(--sl-color-neutral-600);
+            margin-bottom: 0.75rem;
+        }
+
+        .detail-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.5rem 1rem;
+            font-size: 0.9rem;
+        }
+
+        .detail-grid dt {
+            color: var(--sl-color-neutral-500);
+        }
+
+        .detail-grid dd {
+            font-weight: 500;
+        }
+
+        /* Empty state */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--sl-color-neutral-400);
+            padding: 2rem;
+            text-align: center;
+        }
+
+        .empty-state sl-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+
+        /* Status badges */
+        .status-active {
+            color: var(--sl-color-success-600);
+        }
+
+        .status-inactive {
+            color: var(--sl-color-danger-600);
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <sl-icon name="server"></sl-icon>
+        <h1>Genro Proxy Admin</h1>
+        <sl-tag size="small" variant="neutral" id="instance-name">Loading...</sl-tag>
+    </header>
+
+    <div class="main-container">
+        <!-- Sidebar: Tenant List -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <span>Tenants</span>
+                <sl-icon-button name="plus-lg" label="Add tenant" id="add-tenant-btn"></sl-icon-button>
+            </div>
+            <div class="tenant-list" id="tenant-list">
+                <!-- Populated by JS -->
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="content" id="main-content">
+            <div class="empty-state">
+                <sl-icon name="arrow-left-circle"></sl-icon>
+                <p>Select a tenant to view details</p>
+            </div>
+        </main>
+    </div>
+
+    <script type="module">
+        // API Base URL
+        const API_BASE = '';  // Same origin
+
+        // State
+        let tenants = [];
+        let selectedTenant = null;
+        let accounts = [];
+        let storages = [];
+        let selectedAccount = null;
+        let selectedStorage = null;
+
+        // DOM Elements
+        const tenantList = document.getElementById('tenant-list');
+        const mainContent = document.getElementById('main-content');
+        const instanceName = document.getElementById('instance-name');
+
+        // Fetch instance info
+        async function loadInstance() {
+            try {
+                const res = await fetch(`${API_BASE}/api/instance`);
+                if (res.ok) {
+                    const data = await res.json();
+                    instanceName.textContent = data.name || 'proxy';
+                }
+            } catch (e) {
+                console.error('Failed to load instance:', e);
+            }
+        }
+
+        // Fetch tenants
+        async function loadTenants() {
+            try {
+                const res = await fetch(`${API_BASE}/api/tenants`);
+                if (res.ok) {
+                    tenants = await res.json();
+                    renderTenantList();
+                }
+            } catch (e) {
+                console.error('Failed to load tenants:', e);
+                // Mock data for development
+                tenants = [
+                    { id: 'default', name: 'Default Tenant', active: 1, client_base_url: 'http://localhost:8080' },
+                    { id: 'acme', name: 'ACME Corp', active: 1, client_base_url: 'https://acme.example.com' },
+                    { id: 'test', name: 'Test Tenant', active: 0, client_base_url: '' }
+                ];
+                renderTenantList();
+            }
+        }
+
+        // Fetch accounts for tenant
+        async function loadAccounts(tenantId) {
+            try {
+                const res = await fetch(`${API_BASE}/api/accounts?tenant_id=${tenantId}`);
+                if (res.ok) {
+                    accounts = await res.json();
+                }
+            } catch (e) {
+                console.error('Failed to load accounts:', e);
+                // Mock data
+                accounts = [
+                    { pk: '1', id: 'main', name: 'Main Account', active: 1 },
+                    { pk: '2', id: 'backup', name: 'Backup Account', active: 1 }
+                ];
+            }
+            renderAccountList();
+        }
+
+        // Fetch storages for tenant
+        async function loadStorages(tenantId) {
+            try {
+                const res = await fetch(`${API_BASE}/api/storages?tenant_id=${tenantId}`);
+                if (res.ok) {
+                    storages = await res.json();
+                }
+            } catch (e) {
+                console.error('Failed to load storages:', e);
+                // Mock data
+                storages = [
+                    { pk: '1', name: 'HOME', protocol: 'local' },
+                    { pk: '2', name: 'ARCHIVE', protocol: 's3' }
+                ];
+            }
+            renderStorageList();
+        }
+
+        // Render tenant list
+        function renderTenantList() {
+            tenantList.innerHTML = tenants.map(t => `
+                <div class="tenant-item ${selectedTenant?.id === t.id ? 'selected' : ''}"
+                     data-tenant-id="${t.id}">
+                    <div class="tenant-name">
+                        ${t.active ? '<sl-icon name="check-circle" class="status-active"></sl-icon>' :
+                                     '<sl-icon name="x-circle" class="status-inactive"></sl-icon>'}
+                        ${t.name || t.id}
+                    </div>
+                    <div class="tenant-id">${t.id}</div>
+                </div>
+            `).join('');
+
+            // Add click handlers
+            tenantList.querySelectorAll('.tenant-item').forEach(el => {
+                el.addEventListener('click', () => selectTenant(el.dataset.tenantId));
+            });
+        }
+
+        // Select tenant
+        async function selectTenant(tenantId) {
+            selectedTenant = tenants.find(t => t.id === tenantId);
+            selectedAccount = null;
+            selectedStorage = null;
+
+            renderTenantList();
+            renderMainContent();
+
+            await Promise.all([
+                loadAccounts(tenantId),
+                loadStorages(tenantId)
+            ]);
+        }
+
+        // Render main content
+        function renderMainContent() {
+            if (!selectedTenant) {
+                mainContent.innerHTML = `
+                    <div class="empty-state">
+                        <sl-icon name="arrow-left-circle"></sl-icon>
+                        <p>Select a tenant to view details</p>
+                    </div>
+                `;
+                return;
+            }
+
+            mainContent.innerHTML = `
+                <!-- Tenant Info -->
+                <div class="tenant-info">
+                    <h2>
+                        <sl-icon name="building"></sl-icon>
+                        ${selectedTenant.name || selectedTenant.id}
+                    </h2>
+                    <div class="info-grid">
+                        <div class="info-item">
+                            <label>ID</label>
+                            <div class="value">${selectedTenant.id}</div>
+                        </div>
+                        <div class="info-item">
+                            <label>Status</label>
+                            <div class="value">
+                                <sl-badge variant="${selectedTenant.active ? 'success' : 'danger'}">
+                                    ${selectedTenant.active ? 'Active' : 'Inactive'}
+                                </sl-badge>
+                            </div>
+                        </div>
+                        <div class="info-item">
+                            <label>Client Base URL</label>
+                            <div class="value">${selectedTenant.client_base_url || '-'}</div>
+                        </div>
+                        <div class="info-item">
+                            <label>Created</label>
+                            <div class="value">${selectedTenant.created_at || '-'}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Lists Container -->
+                <div class="lists-container">
+                    <!-- Accounts Panel -->
+                    <div class="list-panel">
+                        <div class="list-panel-header">
+                            <h3><sl-icon name="person-badge"></sl-icon> Accounts</h3>
+                            <sl-icon-button name="plus-lg" label="Add account"></sl-icon-button>
+                        </div>
+                        <div class="list-content" id="account-list">
+                            <!-- Populated by JS -->
+                        </div>
+                        <div class="detail-panel" id="account-detail">
+                            <div class="empty-state" style="height: auto; padding: 1rem;">
+                                <p>Select an account</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Storages Panel -->
+                    <div class="list-panel">
+                        <div class="list-panel-header">
+                            <h3><sl-icon name="hdd"></sl-icon> Storages</h3>
+                            <sl-icon-button name="plus-lg" label="Add storage"></sl-icon-button>
+                        </div>
+                        <div class="list-content" id="storage-list">
+                            <!-- Populated by JS -->
+                        </div>
+                        <div class="detail-panel" id="storage-detail">
+                            <div class="empty-state" style="height: auto; padding: 1rem;">
+                                <p>Select a storage</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Render account list
+        function renderAccountList() {
+            const container = document.getElementById('account-list');
+            if (!container) return;
+
+            if (accounts.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <p>No accounts configured</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = accounts.map(a => `
+                <div class="list-item ${selectedAccount?.pk === a.pk ? 'selected' : ''}"
+                     data-account-pk="${a.pk}">
+                    <div class="item-name">${a.name || a.id}</div>
+                    <div class="item-meta">
+                        ${a.active ? '● Active' : '○ Inactive'}
+                    </div>
+                </div>
+            `).join('');
+
+            container.querySelectorAll('.list-item').forEach(el => {
+                el.addEventListener('click', () => selectAccount(el.dataset.accountPk));
+            });
+        }
+
+        // Select account
+        function selectAccount(pk) {
+            selectedAccount = accounts.find(a => a.pk === pk);
+            renderAccountList();
+            renderAccountDetail();
+        }
+
+        // Render account detail
+        function renderAccountDetail() {
+            const container = document.getElementById('account-detail');
+            if (!container || !selectedAccount) return;
+
+            container.innerHTML = `
+                <h4>Account Details</h4>
+                <dl class="detail-grid">
+                    <dt>ID</dt>
+                    <dd>${selectedAccount.id}</dd>
+                    <dt>Name</dt>
+                    <dd>${selectedAccount.name || '-'}</dd>
+                    <dt>Status</dt>
+                    <dd>${selectedAccount.active ? 'Active' : 'Inactive'}</dd>
+                    <dt>PK</dt>
+                    <dd>${selectedAccount.pk}</dd>
+                </dl>
+            `;
+        }
+
+        // Render storage list
+        function renderStorageList() {
+            const container = document.getElementById('storage-list');
+            if (!container) return;
+
+            if (storages.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <p>No storages configured</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = storages.map(s => `
+                <div class="list-item ${selectedStorage?.pk === s.pk ? 'selected' : ''}"
+                     data-storage-pk="${s.pk}">
+                    <div class="item-name">${s.name}</div>
+                    <div class="item-meta">
+                        <sl-badge variant="neutral" size="small">${s.protocol}</sl-badge>
+                    </div>
+                </div>
+            `).join('');
+
+            container.querySelectorAll('.list-item').forEach(el => {
+                el.addEventListener('click', () => selectStorage(el.dataset.storagePk));
+            });
+        }
+
+        // Select storage
+        function selectStorage(pk) {
+            selectedStorage = storages.find(s => s.pk === pk);
+            renderStorageList();
+            renderStorageDetail();
+        }
+
+        // Render storage detail
+        function renderStorageDetail() {
+            const container = document.getElementById('storage-detail');
+            if (!container || !selectedStorage) return;
+
+            container.innerHTML = `
+                <h4>Storage Details</h4>
+                <dl class="detail-grid">
+                    <dt>Name</dt>
+                    <dd>${selectedStorage.name}</dd>
+                    <dt>Protocol</dt>
+                    <dd>${selectedStorage.protocol}</dd>
+                    <dt>PK</dt>
+                    <dd>${selectedStorage.pk}</dd>
+                </dl>
+            `;
+        }
+
+        // Initialize
+        async function init() {
+            await loadInstance();
+            await loadTenants();
+        }
+
+        init();
+    </script>
+</body>
+</html>
