@@ -2,11 +2,10 @@
 """Account REST API endpoint.
 
 This module provides the AccountEndpoint class exposing CRUD operations
-for account configurations via REST API and CLI commands.
+for generic account configurations via REST API and CLI commands.
 
-The endpoint is designed for automatic introspection by api_base and
-cli_base modules, which generate FastAPI routes and Typer commands
-from method signatures using inspect and pydantic.create_model.
+The base endpoint provides only generic fields (id, name, config).
+Domain-specific proxies should subclass and add their own parameters.
 
 Example:
     Register endpoint with the API router::
@@ -18,19 +17,15 @@ Example:
 
     CLI commands auto-generated::
 
-        gproxy accounts add --tenant-id acme --id main --host server.example.com --port 587
+        gproxy accounts add --tenant-id acme --id main --name "Main Account"
         gproxy accounts list --tenant-id acme
         gproxy accounts get --tenant-id acme --account-id main
         gproxy accounts delete --tenant-id acme --account-id main
-
-Note:
-    Enterprise Edition (EE) extends this with AccountEndpoint_EE mixin
-    adding additional account-specific fields.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any
 
 from ...interface.endpoint_base import POST, BaseEndpoint
 
@@ -39,10 +34,13 @@ if TYPE_CHECKING:
 
 
 class AccountEndpoint(BaseEndpoint):
-    """REST API endpoint for account management.
+    """REST API endpoint for generic account management.
 
     Provides CRUD operations for accounts. Each method is
     introspected to auto-generate API routes and CLI commands.
+
+    Domain-specific proxies should subclass and override add()
+    to accept their specific parameters.
 
     Attributes:
         name: Endpoint name used in URL paths ("accounts").
@@ -64,17 +62,8 @@ class AccountEndpoint(BaseEndpoint):
         self,
         id: str,
         tenant_id: str,
-        host: str,
-        port: int,
-        user: str | None = None,
-        password: str | None = None,
-        use_tls: bool = True,
-        batch_size: int | None = None,
-        ttl: int = 300,
-        limit_per_minute: int | None = None,
-        limit_per_hour: int | None = None,
-        limit_per_day: int | None = None,
-        limit_behavior: Literal["defer", "reject"] = "defer",
+        name: str | None = None,
+        config: dict[str, Any] | None = None,
     ) -> dict:
         """Add or update an account configuration.
 
@@ -84,17 +73,8 @@ class AccountEndpoint(BaseEndpoint):
         Args:
             id: Account identifier (unique within tenant).
             tenant_id: Owning tenant ID.
-            host: Server hostname.
-            port: Server port.
-            user: Username for authentication.
-            password: Password (encrypted at rest).
-            use_tls: Enable TLS (True) or plain connection (False).
-            batch_size: Max items per connection.
-            ttl: Connection cache TTL in seconds.
-            limit_per_minute: Rate limit per minute.
-            limit_per_hour: Rate limit per hour.
-            limit_per_day: Rate limit per day.
-            limit_behavior: Action when rate exceeded ("defer" or "reject").
+            name: Display name (defaults to id).
+            config: JSON configuration dict (domain-specific).
 
         Returns:
             Complete account record after insert/update.

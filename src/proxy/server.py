@@ -36,6 +36,6 @@ Note:
 
 from .proxy_base import ProxyBase, config_from_env
 
-# Create proxy and expose its API (includes lifespan management)
+# Create proxy and expose its FastAPI app (includes lifespan management)
 _proxy = ProxyBase(config=config_from_env())
-app = _proxy.api
+app = _proxy.api.app

@@ -295,6 +295,45 @@
         </div>
     </sl-dialog>
 
+    <!-- Add Tenant Dialog -->
+    <sl-dialog label="Add Tenant" id="add-tenant-dialog">
+        <sl-input id="tenant-id-input" label="ID" placeholder="e.g. acme" required></sl-input>
+        <sl-input id="tenant-name-input" label="Name" placeholder="e.g. ACME Corporation" style="margin-top: 1rem;"></sl-input>
+        <sl-input id="tenant-url-input" label="Client Base URL" placeholder="https://..." style="margin-top: 1rem;"></sl-input>
+        <sl-switch id="tenant-active-input" checked style="margin-top: 1rem;">Active</sl-switch>
+        <div slot="footer">
+            <sl-button variant="default" id="cancel-tenant-btn">Cancel</sl-button>
+            <sl-button variant="primary" id="save-tenant-btn">Add Tenant</sl-button>
+        </div>
+    </sl-dialog>
+
+    <!-- Add Account Dialog -->
+    <sl-dialog label="Add Account" id="add-account-dialog">
+        <sl-input id="account-id-input" label="ID" placeholder="e.g. main" required></sl-input>
+        <sl-input id="account-name-input" label="Name" placeholder="e.g. Main Account" style="margin-top: 1rem;"></sl-input>
+        <sl-textarea id="account-config-input" label="Config (JSON)" placeholder='{"key": "value"}' style="margin-top: 1rem;"></sl-textarea>
+        <div slot="footer">
+            <sl-button variant="default" id="cancel-account-btn">Cancel</sl-button>
+            <sl-button variant="primary" id="save-account-btn">Add Account</sl-button>
+        </div>
+    </sl-dialog>
+
+    <!-- Add Storage Dialog -->
+    <sl-dialog label="Add Storage" id="add-storage-dialog">
+        <sl-input id="storage-name-input" label="Name" placeholder="e.g. HOME" required></sl-input>
+        <sl-select id="storage-protocol-input" label="Protocol" value="local" style="margin-top: 1rem;">
+            <sl-option value="local">Local</sl-option>
+            <sl-option value="s3">S3</sl-option>
+            <sl-option value="gcs">GCS</sl-option>
+            <sl-option value="azure">Azure Blob</sl-option>
+        </sl-select>
+        <sl-textarea id="storage-config-input" label="Config (JSON)" placeholder='{"base_path": "/data"}' style="margin-top: 1rem;"></sl-textarea>
+        <div slot="footer">
+            <sl-button variant="default" id="cancel-storage-btn">Cancel</sl-button>
+            <sl-button variant="primary" id="save-storage-btn">Add Storage</sl-button>
+        </div>
+    </sl-dialog>
+
     <div class="main-container">
         <!-- Sidebar: Tenant List -->
         <aside class="sidebar">
@@ -384,6 +423,145 @@
 
             // Try to connect
             await init();
+        });
+
+        // Add Tenant dialog handlers
+        const addTenantDialog = document.getElementById('add-tenant-dialog');
+        const addTenantBtn = document.getElementById('add-tenant-btn');
+
+        addTenantBtn.addEventListener('click', () => {
+            document.getElementById('tenant-id-input').value = '';
+            document.getElementById('tenant-name-input').value = '';
+            document.getElementById('tenant-url-input').value = '';
+            document.getElementById('tenant-active-input').checked = true;
+            addTenantDialog.show();
+        });
+
+        document.getElementById('cancel-tenant-btn').addEventListener('click', () => addTenantDialog.hide());
+
+        document.getElementById('save-tenant-btn').addEventListener('click', async () => {
+            const id = document.getElementById('tenant-id-input').value.trim();
+            const name = document.getElementById('tenant-name-input').value.trim();
+            const client_base_url = document.getElementById('tenant-url-input').value.trim();
+            const active = document.getElementById('tenant-active-input').checked;
+
+            if (!id) {
+                alert('ID is required');
+                return;
+            }
+
+            try {
+                const res = await apiFetch('/api/tenants/add', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id, name: name || id, client_base_url, active })
+                });
+                if (res.ok) {
+                    addTenantDialog.hide();
+                    await loadTenants();
+                } else {
+                    const err = await res.json();
+                    alert('Error: ' + JSON.stringify(err.error));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        });
+
+        // Add Account dialog handlers
+        const addAccountDialog = document.getElementById('add-account-dialog');
+
+        document.getElementById('cancel-account-btn').addEventListener('click', () => addAccountDialog.hide());
+
+        document.getElementById('save-account-btn').addEventListener('click', async () => {
+            if (!selectedTenant) return;
+
+            const id = document.getElementById('account-id-input').value.trim();
+            const name = document.getElementById('account-name-input').value.trim();
+            const configStr = document.getElementById('account-config-input').value.trim();
+
+            if (!id) {
+                alert('ID is required');
+                return;
+            }
+
+            let config = null;
+            if (configStr) {
+                try {
+                    config = JSON.parse(configStr);
+                } catch (e) {
+                    alert('Invalid JSON in config');
+                    return;
+                }
+            }
+
+            try {
+                const res = await apiFetch('/api/accounts/add', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        tenant_id: selectedTenant.id,
+                        id, name: name || id, config
+                    })
+                });
+                if (res.ok) {
+                    addAccountDialog.hide();
+                    await loadAccounts(selectedTenant.id);
+                } else {
+                    const err = await res.json();
+                    alert('Error: ' + JSON.stringify(err.error));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        });
+
+        // Add Storage dialog handlers
+        const addStorageDialog = document.getElementById('add-storage-dialog');
+
+        document.getElementById('cancel-storage-btn').addEventListener('click', () => addStorageDialog.hide());
+
+        document.getElementById('save-storage-btn').addEventListener('click', async () => {
+            if (!selectedTenant) return;
+
+            const name = document.getElementById('storage-name-input').value.trim();
+            const protocol = document.getElementById('storage-protocol-input').value;
+            const configStr = document.getElementById('storage-config-input').value.trim();
+
+            if (!name) {
+                alert('Name is required');
+                return;
+            }
+
+            let config = {};
+            if (configStr) {
+                try {
+                    config = JSON.parse(configStr);
+                } catch (e) {
+                    alert('Invalid JSON in config');
+                    return;
+                }
+            }
+
+            try {
+                const res = await apiFetch('/api/storages/add', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        tenant_id: selectedTenant.id,
+                        name, protocol, config
+                    })
+                });
+                if (res.ok) {
+                    addStorageDialog.hide();
+                    await loadStorages(selectedTenant.id);
+                } else {
+                    const err = await res.json();
+                    alert('Error: ' + JSON.stringify(err.error));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
         });
 
         // Fetch instance info
@@ -567,7 +745,7 @@
                     <div class="list-panel">
                         <div class="list-panel-header">
                             <h3><sl-icon name="person-badge"></sl-icon> Accounts</h3>
-                            <sl-icon-button name="plus-lg" label="Add account"></sl-icon-button>
+                            <sl-icon-button name="plus-lg" label="Add account" id="add-account-btn"></sl-icon-button>
                         </div>
                         <div class="list-content" id="account-list">
                             <!-- Populated by JS -->
@@ -583,7 +761,7 @@
                     <div class="list-panel">
                         <div class="list-panel-header">
                             <h3><sl-icon name="hdd"></sl-icon> Storages</h3>
-                            <sl-icon-button name="plus-lg" label="Add storage"></sl-icon-button>
+                            <sl-icon-button name="plus-lg" label="Add storage" id="add-storage-btn"></sl-icon-button>
                         </div>
                         <div class="list-content" id="storage-list">
                             <!-- Populated by JS -->
@@ -596,6 +774,21 @@
                     </div>
                 </div>
             `;
+
+            // Attach event listeners to dynamically created buttons
+            document.getElementById('add-account-btn')?.addEventListener('click', () => {
+                document.getElementById('account-id-input').value = '';
+                document.getElementById('account-name-input').value = '';
+                document.getElementById('account-config-input').value = '';
+                addAccountDialog.show();
+            });
+
+            document.getElementById('add-storage-btn')?.addEventListener('click', () => {
+                document.getElementById('storage-name-input').value = '';
+                document.getElementById('storage-protocol-input').value = 'local';
+                document.getElementById('storage-config-input').value = '';
+                addStorageDialog.show();
+            });
         }
 
         // Render account list
@@ -639,6 +832,10 @@
             const container = document.getElementById('account-detail');
             if (!container || !selectedAccount) return;
 
+            const configStr = selectedAccount.config
+                ? JSON.stringify(selectedAccount.config, null, 2)
+                : '-';
+
             container.innerHTML = `
                 <h4>Account Details</h4>
                 <dl class="detail-grid">
@@ -646,10 +843,10 @@
                     <dd>${selectedAccount.id}</dd>
                     <dt>Name</dt>
                     <dd>${selectedAccount.name || '-'}</dd>
-                    <dt>Status</dt>
-                    <dd>${selectedAccount.active ? 'Active' : 'Inactive'}</dd>
                     <dt>PK</dt>
                     <dd>${selectedAccount.pk}</dd>
+                    <dt>Config</dt>
+                    <dd><pre style="margin: 0; font-size: 0.85em;">${configStr}</pre></dd>
                 </dl>
             `;
         }
