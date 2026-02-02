@@ -171,12 +171,22 @@ class TestTenantEndpointList:
 
     async def test_list_tenants(self, endpoint, mock_table):
         """list() returns all tenants."""
-        mock_table.list_all = AsyncMock(return_value=[
+        mock_table.select = AsyncMock(return_value=[
             {"id": "t1", "name": "Tenant 1"},
             {"id": "t2", "name": "Tenant 2"},
         ])
         result = await endpoint.list()
         assert len(result) == 2
+        mock_table.select.assert_called_once_with(where=None)
+
+    async def test_list_active_only(self, endpoint, mock_table):
+        """list(active_only=True) filters active tenants."""
+        mock_table.select = AsyncMock(return_value=[
+            {"id": "t1", "name": "Tenant 1", "active": 1},
+        ])
+        result = await endpoint.list(active_only=True)
+        assert len(result) == 1
+        mock_table.select.assert_called_once_with(where={"active": 1})
 
 
 class TestTenantEndpointDelete:

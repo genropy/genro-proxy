@@ -181,7 +181,8 @@ class TenantEndpoint(BaseEndpoint):
         Returns:
             List of tenant configuration dicts.
         """
-        return await self.table.list_all(active_only=active_only)
+        where = {"active": 1} if active_only else None
+        return await self.table.select(where=where)
 
     @POST
     async def delete(self, tenant_id: str) -> bool:

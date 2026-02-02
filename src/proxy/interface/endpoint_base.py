@@ -109,6 +109,66 @@ class BaseEndpoint:
         """
         self.table = table
 
+    # =========================================================================
+    # Base CRUD methods - subclasses can override for custom logic
+    # =========================================================================
+
+    async def list(self) -> list[dict[str, Any]]:
+        """List all records."""
+        return await self.table.select()
+
+    async def get(self, id: str) -> dict[str, Any]:
+        """Get single record by primary key.
+
+        Args:
+            id: Primary key value.
+
+        Returns:
+            Record dict.
+
+        Raises:
+            ValueError: If record not found.
+        """
+        pkey = self.table.pkey or "id"
+        record = await self.table.select_one(where={pkey: id})
+        if not record:
+            raise ValueError(f"{self.name} '{id}' not found")
+        return record
+
+    @POST
+    async def add(self, id: str, **data: Any) -> dict[str, Any]:
+        """Add new record.
+
+        Args:
+            id: Primary key value.
+            **data: Additional fields.
+
+        Returns:
+            Created record dict.
+        """
+        pkey = self.table.pkey or "id"
+        record = {pkey: id, **data}
+        await self.table.insert(record)
+        return record
+
+    @POST
+    async def delete(self, id: str) -> bool:
+        """Delete record by primary key.
+
+        Args:
+            id: Primary key value.
+
+        Returns:
+            True if deleted.
+        """
+        pkey = self.table.pkey or "id"
+        await self.table.delete(where={pkey: id})
+        return True
+
+    # =========================================================================
+    # Introspection methods for API/CLI generation
+    # =========================================================================
+
     def get_methods(self) -> list[tuple[str, Callable]]:
         """Return all public async methods for API/CLI generation.
 
