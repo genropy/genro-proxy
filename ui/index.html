@@ -389,9 +389,10 @@
         // Fetch instance info
         async function loadInstance() {
             try {
-                const res = await apiFetch('/api/instance');
+                const res = await apiFetch('/api/instance/get');
                 if (res.ok) {
-                    const data = await res.json();
+                    const json = await res.json();
+                    const data = json.data || json;
                     instanceName.textContent = data.name || 'proxy';
                     updateConnectionStatus(true);
                     return true;
@@ -423,9 +424,10 @@
             }
 
             try {
-                const res = await apiFetch('/api/tenants');
+                const res = await apiFetch('/api/tenants/list');
                 if (res.ok) {
-                    tenants = await res.json();
+                    const json = await res.json();
+                    tenants = json.data || json;
                     renderTenantList();
                 }
             } catch (e) {
@@ -446,9 +448,10 @@
             }
 
             try {
-                const res = await apiFetch(`/api/accounts?tenant_id=${tenantId}`);
+                const res = await apiFetch(`/api/accounts/list?tenant_id=${tenantId}`);
                 if (res.ok) {
-                    accounts = await res.json();
+                    const json = await res.json();
+                    accounts = json.data || json;
                 }
             } catch (e) {
                 console.error('Failed to load accounts:', e);
@@ -469,9 +472,10 @@
             }
 
             try {
-                const res = await apiFetch(`/api/storages?tenant_id=${tenantId}`);
+                const res = await apiFetch(`/api/storages/list?tenant_id=${tenantId}`);
                 if (res.ok) {
-                    storages = await res.json();
+                    const json = await res.json();
+                    storages = json.data || json;
                 }
             } catch (e) {
                 console.error('Failed to load storages:', e);
