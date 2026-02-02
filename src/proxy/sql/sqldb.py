@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import importlib
+import pkgutil
 from typing import TYPE_CHECKING, Any
 
 from .adapters import DbAdapter, get_adapter
@@ -19,18 +21,17 @@ class SqlDb:
     - PostgreSQL: "postgresql://user:pass@host/db"
 
     Features:
-    - Table class registration via add_table()
+    - Table class registration via add_table() or discover()
     - Table access via table(name)
     - Schema creation and verification
     - CRUD operations via adapter
     - Encryption key access via parent.encryption_key
 
     Usage:
-        db = SqlDb("/data/mail.db", parent=proxy)
+        db = SqlDb("/data/service.db", parent=proxy)
         await db.connect()
 
-        db.add_table(TenantsTable)
-        db.add_table(AccountsTable)
+        db.discover("proxy.entities")
         await db.check_structure()
 
         tenant = await db.table('tenants').select_one(where={"id": "acme"})
@@ -57,6 +58,10 @@ class SqlDb:
             return None
         return getattr(self.parent, "encryption_key", None)
 
+    # -------------------------------------------------------------------------
+    # Connection management
+    # -------------------------------------------------------------------------
+
     async def connect(self) -> None:
         """Connect to database."""
         await self.adapter.connect()
@@ -64,6 +69,10 @@ class SqlDb:
     async def close(self) -> None:
         """Close database connection."""
         await self.adapter.close()
+
+    # -------------------------------------------------------------------------
+    # Table management
+    # -------------------------------------------------------------------------
 
     def add_table(self, table_class: type[Table]) -> Table:
         """Register and instantiate a table class.
@@ -80,6 +89,32 @@ class SqlDb:
         instance = table_class(self)
         self.tables[instance.name] = instance
         return instance
+
+    def discover(self, *packages: str) -> list[Table]:
+        """Auto-discover and register Table classes from entity packages.
+
+        Scans each package for sub-packages containing table.py modules,
+        then registers any Table subclass found.
+
+        Args:
+            *packages: Package paths (e.g., "proxy.entities", "myproxy.entities")
+
+        Returns:
+            List of registered table instances.
+
+        Example:
+            db.discover("proxy.entities")
+            # Registers: InstanceTable, TenantsTable, AccountsTable, etc.
+
+            db.discover("proxy.entities", "myproxy.entities")
+            # Registers tables from both packages
+        """
+        registered: list[Table] = []
+        for package_path in packages:
+            for table_class in self._find_table_classes(package_path):
+                if table_class.name not in self.tables:
+                    registered.append(self.add_table(table_class))
+        return registered
 
     def table(self, name: str) -> Table:
         """Get table instance by name.
@@ -129,6 +164,49 @@ class SqlDb:
     async def rollback(self) -> None:
         """Rollback transaction."""
         await self.adapter.rollback()
+
+    # -------------------------------------------------------------------------
+    # Private helpers
+    # -------------------------------------------------------------------------
+
+    def _find_table_classes(self, package_path: str) -> list[type[Table]]:
+        """Find all Table classes in a package's entity sub-packages."""
+        from .table import Table
+
+        result: list[type[Table]] = []
+        try:
+            package = importlib.import_module(package_path)
+        except ImportError:
+            return result
+
+        package_dir = getattr(package, "__path__", None)
+        if not package_dir:
+            return result
+
+        for _, name, is_pkg in pkgutil.iter_modules(package_dir):
+            if not is_pkg:
+                continue
+            module_path = f"{package_path}.{name}.table"
+            try:
+                module = importlib.import_module(module_path)
+            except ImportError:
+                continue
+
+            for attr_name in dir(module):
+                if attr_name.startswith("_"):
+                    continue
+                obj = getattr(module, attr_name)
+                if not isinstance(obj, type):
+                    continue
+                if not issubclass(obj, Table):
+                    continue
+                if obj is Table:
+                    continue
+                if not hasattr(obj, "name") or not obj.name:
+                    continue
+                result.append(obj)
+
+        return result
 
 
 __all__ = ["SqlDb"]

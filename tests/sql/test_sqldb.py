@@ -164,3 +164,66 @@ class TestSqlDbCheckStructure:
         await db.check_structure()
 
         db.tables["dummy"].create_schema.assert_called_once()
+
+
+class TestSqlDbDiscover:
+    """Tests for discover method."""
+
+    def test_discover_finds_entity_tables(self):
+        """discover() finds and registers Table classes from entity packages."""
+        db = SqlDb(":memory:")
+        tables = db.discover("proxy.entities")
+
+        # Should find all 5 base entities
+        assert len(tables) >= 5
+        assert "instance" in db.tables
+        assert "tenants" in db.tables
+        assert "accounts" in db.tables
+        assert "storages" in db.tables
+        assert "command_log" in db.tables
+
+    def test_discover_returns_registered_tables(self):
+        """discover() returns list of registered table instances."""
+        db = SqlDb(":memory:")
+        tables = db.discover("proxy.entities")
+
+        for table in tables:
+            assert isinstance(table, Table)
+            assert table.name in db.tables
+
+    def test_discover_skips_already_registered(self):
+        """discover() skips tables already registered."""
+        db = SqlDb(":memory:")
+
+        # First discover
+        tables1 = db.discover("proxy.entities")
+        count1 = len(tables1)
+
+        # Second discover should return empty (all already registered)
+        tables2 = db.discover("proxy.entities")
+        assert len(tables2) == 0
+
+        # Total tables unchanged
+        assert len(db.tables) == count1
+
+    def test_discover_multiple_packages(self):
+        """discover() can scan multiple packages."""
+        db = SqlDb(":memory:")
+        tables = db.discover("proxy.entities")
+
+        # All tables registered from proxy.entities
+        assert "instance" in db.tables
+        assert "tenants" in db.tables
+
+    def test_discover_invalid_package_ignored(self):
+        """discover() ignores non-existent packages."""
+        db = SqlDb(":memory:")
+        tables = db.discover("nonexistent.package")
+        assert tables == []
+
+    def test_discover_empty_package(self):
+        """discover() handles packages with no table modules."""
+        db = SqlDb(":memory:")
+        # proxy.sql has no entity sub-packages with table.py
+        tables = db.discover("proxy.sql")
+        assert tables == []

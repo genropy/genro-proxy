@@ -67,6 +67,9 @@ azure = ["adlfs>=2024.1.0"]
 cloud = ["genro-proxy[s3,gcs,azure]"]
 all = ["genro-proxy[dev,postgresql,cloud]"]
 
+[project.scripts]
+gproxy = "proxy.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/genropy/genro-proxy"
 Documentation = "https://genro-proxy.readthedocs.io"

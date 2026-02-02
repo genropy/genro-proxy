@@ -268,7 +268,32 @@
         <sl-icon name="server"></sl-icon>
         <h1>Genro Proxy Admin</h1>
         <sl-tag size="small" variant="neutral" id="instance-name">Loading...</sl-tag>
+        <div style="flex: 1;"></div>
+        <sl-badge id="connection-status" variant="danger">Disconnected</sl-badge>
+        <sl-icon-button name="gear" label="Settings" id="settings-btn"></sl-icon-button>
     </header>
+
+    <!-- Settings Dialog -->
+    <sl-dialog label="API Settings" id="settings-dialog">
+        <sl-input
+            id="api-token-input"
+            label="API Token"
+            type="password"
+            password-toggle
+            placeholder="Enter your instance API token"
+            help-text="Token for authenticating with the proxy API"
+        ></sl-input>
+        <sl-input
+            id="api-url-input"
+            label="API Base URL"
+            placeholder="http://localhost:8000"
+            help-text="Leave empty for same origin"
+            style="margin-top: 1rem;"
+        ></sl-input>
+        <div slot="footer">
+            <sl-button variant="primary" id="save-settings-btn">Save & Connect</sl-button>
+        </div>
+    </sl-dialog>
 
     <div class="main-container">
         <!-- Sidebar: Tenant List -->
@@ -292,8 +317,9 @@
     </div>
 
     <script type="module">
-        // API Base URL
-        const API_BASE = '';  // Same origin
+        // API Configuration (persisted in localStorage)
+        let API_BASE = localStorage.getItem('proxy_api_url') || '';
+        let API_TOKEN = localStorage.getItem('proxy_api_token') || '';
 
         // State
         let tenants = [];
@@ -302,77 +328,153 @@
         let storages = [];
         let selectedAccount = null;
         let selectedStorage = null;
+        let isConnected = false;
 
         // DOM Elements
         const tenantList = document.getElementById('tenant-list');
         const mainContent = document.getElementById('main-content');
         const instanceName = document.getElementById('instance-name');
+        const connectionStatus = document.getElementById('connection-status');
+        const settingsBtn = document.getElementById('settings-btn');
+        const settingsDialog = document.getElementById('settings-dialog');
+        const apiTokenInput = document.getElementById('api-token-input');
+        const apiUrlInput = document.getElementById('api-url-input');
+        const saveSettingsBtn = document.getElementById('save-settings-btn');
+
+        // API fetch helper with auth
+        async function apiFetch(path, options = {}) {
+            const headers = {
+                'Content-Type': 'application/json',
+                ...options.headers
+            };
+            if (API_TOKEN) {
+                headers['Authorization'] = `Bearer ${API_TOKEN}`;
+            }
+            return fetch(`${API_BASE}${path}`, { ...options, headers });
+        }
+
+        // Update connection status
+        function updateConnectionStatus(connected, message = '') {
+            isConnected = connected;
+            if (connected) {
+                connectionStatus.variant = 'success';
+                connectionStatus.textContent = 'Connected';
+            } else {
+                connectionStatus.variant = 'danger';
+                connectionStatus.textContent = message || 'Disconnected';
+            }
+        }
+
+        // Settings dialog handlers
+        settingsBtn.addEventListener('click', () => {
+            apiTokenInput.value = API_TOKEN;
+            apiUrlInput.value = API_BASE;
+            settingsDialog.show();
+        });
+
+        saveSettingsBtn.addEventListener('click', async () => {
+            API_TOKEN = apiTokenInput.value.trim();
+            API_BASE = apiUrlInput.value.trim();
+
+            // Persist to localStorage
+            localStorage.setItem('proxy_api_token', API_TOKEN);
+            localStorage.setItem('proxy_api_url', API_BASE);
+
+            settingsDialog.hide();
+
+            // Try to connect
+            await init();
+        });
 
         // Fetch instance info
         async function loadInstance() {
             try {
-                const res = await fetch(`${API_BASE}/api/instance`);
+                const res = await apiFetch('/api/instance');
                 if (res.ok) {
                     const data = await res.json();
                     instanceName.textContent = data.name || 'proxy';
+                    updateConnectionStatus(true);
+                    return true;
+                } else if (res.status === 401 || res.status === 403) {
+                    updateConnectionStatus(false, 'Invalid Token');
+                    return false;
+                } else {
+                    updateConnectionStatus(false, `Error ${res.status}`);
+                    return false;
                 }
             } catch (e) {
                 console.error('Failed to load instance:', e);
+                updateConnectionStatus(false, 'Connection Failed');
+                return false;
             }
         }
 
         // Fetch tenants
         async function loadTenants() {
-            try {
-                const res = await fetch(`${API_BASE}/api/tenants`);
-                if (res.ok) {
-                    tenants = await res.json();
-                    renderTenantList();
-                }
-            } catch (e) {
-                console.error('Failed to load tenants:', e);
-                // Mock data for development
+            if (!isConnected) {
+                // Show mock data when not connected
                 tenants = [
                     { id: 'default', name: 'Default Tenant', active: 1, client_base_url: 'http://localhost:8080' },
                     { id: 'acme', name: 'ACME Corp', active: 1, client_base_url: 'https://acme.example.com' },
                     { id: 'test', name: 'Test Tenant', active: 0, client_base_url: '' }
                 ];
                 renderTenantList();
+                return;
+            }
+
+            try {
+                const res = await apiFetch('/api/tenants');
+                if (res.ok) {
+                    tenants = await res.json();
+                    renderTenantList();
+                }
+            } catch (e) {
+                console.error('Failed to load tenants:', e);
             }
         }
 
         // Fetch accounts for tenant
         async function loadAccounts(tenantId) {
-            try {
-                const res = await fetch(`${API_BASE}/api/accounts?tenant_id=${tenantId}`);
-                if (res.ok) {
-                    accounts = await res.json();
-                }
-            } catch (e) {
-                console.error('Failed to load accounts:', e);
+            if (!isConnected) {
                 // Mock data
                 accounts = [
                     { pk: '1', id: 'main', name: 'Main Account', active: 1 },
                     { pk: '2', id: 'backup', name: 'Backup Account', active: 1 }
                 ];
+                renderAccountList();
+                return;
+            }
+
+            try {
+                const res = await apiFetch(`/api/accounts?tenant_id=${tenantId}`);
+                if (res.ok) {
+                    accounts = await res.json();
+                }
+            } catch (e) {
+                console.error('Failed to load accounts:', e);
             }
             renderAccountList();
         }
 
         // Fetch storages for tenant
         async function loadStorages(tenantId) {
-            try {
-                const res = await fetch(`${API_BASE}/api/storages?tenant_id=${tenantId}`);
-                if (res.ok) {
-                    storages = await res.json();
-                }
-            } catch (e) {
-                console.error('Failed to load storages:', e);
+            if (!isConnected) {
                 // Mock data
                 storages = [
                     { pk: '1', name: 'HOME', protocol: 'local' },
                     { pk: '2', name: 'ARCHIVE', protocol: 's3' }
                 ];
+                renderStorageList();
+                return;
+            }
+
+            try {
+                const res = await apiFetch(`/api/storages?tenant_id=${tenantId}`);
+                if (res.ok) {
+                    storages = await res.json();
+                }
+            } catch (e) {
+                console.error('Failed to load storages:', e);
             }
             renderStorageList();
         }
@@ -604,8 +706,19 @@
 
         // Initialize
         async function init() {
-            await loadInstance();
+            // Reset state
+            tenants = [];
+            selectedTenant = null;
+            accounts = [];
+            storages = [];
+
+            const connected = await loadInstance();
             await loadTenants();
+
+            // If no token configured, show settings dialog
+            if (!API_TOKEN && !connected) {
+                settingsDialog.show();
+            }
         }
 
         init();
