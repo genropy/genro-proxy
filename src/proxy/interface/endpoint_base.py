@@ -304,6 +304,34 @@ class BaseEndpoint:
             return (annotation, ...)  # Required field
         return (annotation, default)
 
+    async def call(self, method_name: str, params: dict[str, Any]) -> Any:
+        """Validate parameters and call endpoint method.
+
+        Single entry point for all channels (CLI, API, UI, etc.).
+        Validates input with Pydantic before executing method.
+
+        Args:
+            method_name: Name of the method to call.
+            params: Raw parameters dict (may contain strings from CLI).
+
+        Returns:
+            Method result.
+
+        Raises:
+            ValidationError: If params don't match method signature.
+            ValueError: If method not found.
+        """
+        method = getattr(self, method_name, None)
+        if method is None or not callable(method):
+            raise ValueError(f"Method '{method_name}' not found on {self.name}")
+
+        # Create and validate with Pydantic model
+        model_class = self.create_request_model(method_name)
+        validated = model_class.model_validate(params)
+
+        # Call method with validated params
+        return await method(**validated.model_dump())
+
     @classmethod
     def discover(
         cls,

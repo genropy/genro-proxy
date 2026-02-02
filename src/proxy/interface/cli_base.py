@@ -110,24 +110,28 @@ def _annotation_to_click_type(annotation: Any) -> type | click.Choice:
     return str
 
 
-def _create_click_command(method: Callable, run_async: Callable) -> click.Command:
-    """Create a Click command from an async method.
+def _create_click_command(
+    endpoint: Any, method_name: str, run_async: Callable
+) -> click.Command:
+    """Create a Click command from an endpoint method.
 
     Args:
-        method: Async method to wrap.
+        endpoint: Endpoint instance with the method.
+        method_name: Name of the method to wrap.
         run_async: Function to run async code (e.g., asyncio.run).
 
     Returns:
         Click command ready to be added to a group.
 
     Note:
-        tenant_id is treated specially: it becomes an optional positional
-        argument with fallback to the current context (via require_context).
+        Uses endpoint.call() for unified Pydantic validation.
+        tenant_id is treated specially: optional positional with context fallback.
     """
     from .cli_context import require_context
 
+    method = getattr(endpoint, method_name)
     sig = inspect.signature(method)
-    doc = method.__doc__ or f"{method.__name__} operation"
+    doc = method.__doc__ or f"{method_name} operation"
 
     options = []
     arguments = []
@@ -178,7 +182,8 @@ def _create_click_command(method: Callable, run_async: Callable) -> click.Comman
             _, tenant = require_context(require_tenant=True)
             py_kwargs["tenant_id"] = tenant
 
-        result = run_async(method(**py_kwargs))
+        # Use endpoint.call() for unified Pydantic validation
+        result = run_async(endpoint.call(method_name, py_kwargs))
         if result is not None:
             _print_result(result)
 
@@ -242,7 +247,7 @@ def register_endpoint(
         if not callable(method) or not inspect.iscoroutinefunction(method):
             continue
 
-        cmd = _create_click_command(method, run_async)
+        cmd = _create_click_command(endpoint, method_name, run_async)
         cmd.name = method_name.replace("_", "-")
         endpoint_group.add_command(cmd)
 
