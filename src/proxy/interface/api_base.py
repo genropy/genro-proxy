@@ -1,16 +1,100 @@
 # Copyright 2025 Softwell S.r.l. - SPDX-License-Identifier: Apache-2.0
-"""FastAPI application manager with UI serving."""
+"""FastAPI application manager with automatic route generation from endpoints."""
 
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 
 if TYPE_CHECKING:
-    from proxy.proxy_base import ProxyBase  # noqa: F401
+    from proxy.proxy_base import ProxyBase
+
+from .endpoint_base import BaseEndpoint
+
+
+def register_api_endpoint(router: APIRouter, endpoint: BaseEndpoint) -> None:
+    """Register all methods of an endpoint as API routes.
+
+    Creates routes for each public async method:
+    - GET methods: /{endpoint_name}/{method_name}
+    - POST methods: /{endpoint_name}/{method_name}
+
+    Uses endpoint.call() for unified Pydantic validation.
+
+    Args:
+        router: FastAPI router to add routes to.
+        endpoint: Endpoint instance with async methods.
+    """
+    import inspect
+
+    for method_name, method in endpoint.get_methods():
+        http_method = endpoint.get_http_method(method_name)
+        path = f"/{endpoint.name}/{method_name.replace('_', '-')}"
+
+        # Create route handler
+        if http_method == "POST":
+            _add_post_route(router, endpoint, method_name, path, method)
+        else:
+            _add_get_route(router, endpoint, method_name, path, method)
+
+
+def _add_post_route(
+    router: APIRouter,
+    endpoint: BaseEndpoint,
+    method_name: str,
+    path: str,
+    method: Any,
+) -> None:
+    """Add POST route that reads params from JSON body."""
+
+    async def route_handler(request: Request) -> JSONResponse:
+        try:
+            body = await request.json() if await request.body() else {}
+        except Exception:
+            body = {}
+
+        try:
+            result = await endpoint.call(method_name, body)
+            return JSONResponse(content={"data": result})
+        except ValidationError as e:
+            return JSONResponse(status_code=422, content={"error": e.errors()})
+        except ValueError as e:
+            return JSONResponse(status_code=404, content={"error": str(e)})
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": str(e)})
+
+    route_handler.__doc__ = method.__doc__
+    router.add_api_route(path, route_handler, methods=["POST"])
+
+
+def _add_get_route(
+    router: APIRouter,
+    endpoint: BaseEndpoint,
+    method_name: str,
+    path: str,
+    method: Any,
+) -> None:
+    """Add GET route that reads params from query string."""
+
+    async def route_handler(request: Request) -> JSONResponse:
+        params = dict(request.query_params)
+
+        try:
+            result = await endpoint.call(method_name, params)
+            return JSONResponse(content={"data": result})
+        except ValidationError as e:
+            return JSONResponse(status_code=422, content={"error": e.errors()})
+        except ValueError as e:
+            return JSONResponse(status_code=404, content={"error": str(e)})
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": str(e)})
+
+    route_handler.__doc__ = method.__doc__
+    router.add_api_route(path, route_handler, methods=["GET"])
 
 
 class ApiManager:
@@ -39,6 +123,12 @@ class ApiManager:
         @app.get("/health")
         async def health():
             return {"status": "ok"}
+
+        # Register endpoint routes
+        router = APIRouter(prefix="/api")
+        for endpoint in self.proxy.endpoints.values():
+            register_api_endpoint(router, endpoint)
+        app.include_router(router)
 
         # Mount UI if directory exists
         ui_path = self._get_ui_path()

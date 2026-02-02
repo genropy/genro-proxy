@@ -24,7 +24,7 @@ Example:
                 return await self.table.add({"id": id, "name": name})
 """
 
-from .api_base import ApiManager
+from .api_base import ApiManager, register_api_endpoint
 from .cli_base import CliManager, console, register_endpoint
 from .cli_context import CliContext, require_context, resolve_context
 from .endpoint_base import POST, BaseEndpoint, EndpointManager
@@ -39,6 +39,7 @@ __all__ = [
     "POST",
     "REPLWrapper",
     "console",
+    "register_api_endpoint",
     "register_endpoint",
     "repl_wrap",
     "require_context",
