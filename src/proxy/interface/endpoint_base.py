@@ -169,16 +169,21 @@ class BaseEndpoint:
     # Introspection methods for API/CLI generation
     # =========================================================================
 
+    # Methods excluded from API/CLI generation (internal use only)
+    _internal_methods = {"invoke"}
+
     def get_methods(self) -> list[tuple[str, Callable]]:
         """Return all public async methods for API/CLI generation.
 
         Returns:
             List of (method_name, method) tuples for all public
-            async methods (excluding those starting with underscore).
+            async methods (excluding private and internal methods).
         """
         methods = []
         for method_name in dir(self):
             if method_name.startswith("_"):
+                continue
+            if method_name in self._internal_methods:
                 continue
             method = getattr(self, method_name)
             if callable(method) and inspect.iscoroutinefunction(method):
@@ -304,7 +309,7 @@ class BaseEndpoint:
             return (annotation, ...)  # Required field
         return (annotation, default)
 
-    async def call(self, method_name: str, params: dict[str, Any]) -> Any:
+    async def invoke(self, method_name: str, params: dict[str, Any]) -> Any:
         """Validate parameters and call endpoint method.
 
         Single entry point for all channels (CLI, API, UI, etc.).

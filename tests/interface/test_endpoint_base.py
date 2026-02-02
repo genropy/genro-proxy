@@ -320,51 +320,51 @@ class TestEndpointDiscoveryFilters:
         assert result is None
 
 
-class TestEndpointCall:
-    """Tests for endpoint.call() unified validation."""
+class TestEndpointInvoke:
+    """Tests for endpoint.invoke() unified validation."""
 
     @pytest.fixture
     def endpoint(self):
         """Create endpoint for testing."""
         return SampleEndpoint(MockTable())
 
-    async def test_call_validates_and_executes(self, endpoint):
-        """call() should validate params and execute method."""
-        result = await endpoint.call("get", {"sample_id": "123"})
+    async def test_invoke_validates_and_executes(self, endpoint):
+        """invoke() should validate params and execute method."""
+        result = await endpoint.invoke("get", {"sample_id": "123"})
         assert result == {"id": "123", "name": "test"}
 
-    async def test_call_coerces_types(self, endpoint):
-        """call() should coerce string to correct type via Pydantic."""
+    async def test_invoke_coerces_types(self, endpoint):
+        """invoke() should coerce string to correct type via Pydantic."""
         # active_only is bool, but we pass string - Pydantic coerces it
-        result = await endpoint.call("list", {"active_only": "false"})
+        result = await endpoint.invoke("list", {"active_only": "false"})
         assert isinstance(result, list)
 
-    async def test_call_with_optional_params(self, endpoint):
-        """call() should handle optional params."""
-        result = await endpoint.call("add", {"id": "1", "name": "test"})
+    async def test_invoke_with_optional_params(self, endpoint):
+        """invoke() should handle optional params."""
+        result = await endpoint.invoke("add", {"id": "1", "name": "test"})
         assert result == {"id": "1", "name": "test"}
 
-    async def test_call_with_all_params(self, endpoint):
-        """call() should pass all params including optional."""
-        result = await endpoint.call("add", {"id": "1", "name": "test", "data": {"key": "val"}})
+    async def test_invoke_with_all_params(self, endpoint):
+        """invoke() should pass all params including optional."""
+        result = await endpoint.invoke("add", {"id": "1", "name": "test", "data": {"key": "val"}})
         assert result == {"id": "1", "name": "test"}
 
-    async def test_call_raises_on_missing_required(self, endpoint):
-        """call() should raise ValidationError on missing required params."""
+    async def test_invoke_raises_on_missing_required(self, endpoint):
+        """invoke() should raise ValidationError on missing required params."""
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            await endpoint.call("add", {"id": "1"})  # missing 'name'
+            await endpoint.invoke("add", {"id": "1"})  # missing 'name'
 
-    async def test_call_raises_on_unknown_method(self, endpoint):
-        """call() should raise ValueError for unknown method."""
+    async def test_invoke_raises_on_unknown_method(self, endpoint):
+        """invoke() should raise ValueError for unknown method."""
         with pytest.raises(ValueError, match="not found"):
-            await endpoint.call("nonexistent", {})
+            await endpoint.invoke("nonexistent", {})
 
-    async def test_call_raises_on_invalid_type(self, endpoint):
-        """call() should raise ValidationError on wrong type."""
+    async def test_invoke_raises_on_invalid_type(self, endpoint):
+        """invoke() should raise ValidationError on wrong type."""
         from pydantic import ValidationError
 
         # list expected but dict provided
         with pytest.raises(ValidationError):
-            await endpoint.call("complex_params", {"items": {"not": "a list"}})
+            await endpoint.invoke("complex_params", {"items": {"not": "a list"}})

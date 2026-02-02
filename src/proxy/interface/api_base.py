@@ -23,7 +23,7 @@ def register_api_endpoint(router: APIRouter, endpoint: BaseEndpoint) -> None:
     - GET methods: /{endpoint_name}/{method_name}
     - POST methods: /{endpoint_name}/{method_name}
 
-    Uses endpoint.call() for unified Pydantic validation.
+    Uses endpoint.invoke() for unified Pydantic validation.
 
     Args:
         router: FastAPI router to add routes to.
@@ -58,7 +58,7 @@ def _add_post_route(
             body = {}
 
         try:
-            result = await endpoint.call(method_name, body)
+            result = await endpoint.invoke(method_name, body)
             return JSONResponse(content={"data": result})
         except ValidationError as e:
             return JSONResponse(status_code=422, content={"error": e.errors()})
@@ -84,7 +84,7 @@ def _add_get_route(
         params = dict(request.query_params)
 
         try:
-            result = await endpoint.call(method_name, params)
+            result = await endpoint.invoke(method_name, params)
             return JSONResponse(content={"data": result})
         except ValidationError as e:
             return JSONResponse(status_code=422, content={"error": e.errors()})

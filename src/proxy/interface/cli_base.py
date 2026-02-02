@@ -182,8 +182,8 @@ def _create_click_command(
             _, tenant = require_context(require_tenant=True)
             py_kwargs["tenant_id"] = tenant
 
-        # Use endpoint.call() for unified Pydantic validation
-        result = run_async(endpoint.call(method_name, py_kwargs))
+        # Use endpoint.invoke() for unified Pydantic validation
+        result = run_async(endpoint.invoke(method_name, py_kwargs))
         if result is not None:
             _print_result(result)
 
