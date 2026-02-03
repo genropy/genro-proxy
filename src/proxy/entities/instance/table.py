@@ -36,14 +36,14 @@ class InstanceTable(Table):
         c.column("created_at", Timestamp, default="CURRENT_TIMESTAMP")
         c.column("updated_at", Timestamp, default="CURRENT_TIMESTAMP")
 
-    async def get_instance(self) -> dict[str, Any] | None:
-        """Get the singleton instance configuration."""
-        return await self.select_one(where={"id": 1})
+    async def get_instance(self) -> dict[str, Any]:
+        """Get the singleton instance configuration. Returns {} if not found."""
+        return await self.record(where={"id": 1}, ignore_missing=True)
 
     async def ensure_instance(self) -> dict[str, Any]:
         """Get or create the singleton instance configuration."""
         row = await self.get_instance()
-        if row is None:
+        if not row:
             await self.insert({"id": 1})
             row = await self.get_instance()
         return row  # type: ignore[return-value]
@@ -51,7 +51,7 @@ class InstanceTable(Table):
     async def update_instance(self, updates: dict[str, Any]) -> None:
         """Update the singleton instance configuration."""
         await self.ensure_instance()
-        async with self.record(1) as rec:
+        async with self.record_to_update(1) as rec:
             for key, value in updates.items():
                 rec[key] = value
 

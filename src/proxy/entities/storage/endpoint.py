@@ -53,27 +53,32 @@ class StorageEndpoint(BaseEndpoint):
             config: {"container": "my-container", "prefix": "attachments/",
                     "account_name": "...", "account_key": "..."}
         """
-        data = {
-            "tenant_id": tenant_id,
-            "name": name,
-            "protocol": protocol,
-            "config": config or {},
-        }
-        await self.table.add(data)
-        return await self.table.get(tenant_id, name)
+        async with self.table.record_to_update(
+            {"tenant_id": tenant_id, "name": name},
+            insert_missing=True,
+        ) as rec:
+            rec["protocol"] = protocol
+            rec["config"] = config or {}
+
+        return await self.get(tenant_id, name)
 
     async def get(self, tenant_id: str, name: str) -> dict:
         """Get a single storage configuration."""
-        return await self.table.get(tenant_id, name)
+        from proxy.sql import RecordNotFoundError
+
+        try:
+            return await self.table.record(where={"tenant_id": tenant_id, "name": name})
+        except RecordNotFoundError:
+            raise ValueError(f"Storage '{name}' not found for tenant '{tenant_id}'")
 
     async def list(self, tenant_id: str) -> list[dict]:
         """List all storage backends for a tenant."""
-        return await self.table.list_all(tenant_id=tenant_id)
+        return await self.table.select(where={"tenant_id": tenant_id}, order_by="name")
 
     @POST
     async def delete(self, tenant_id: str, name: str) -> dict:
         """Delete a storage backend."""
-        deleted = await self.table.remove(tenant_id, name)
+        deleted = await self.table.delete(where={"tenant_id": tenant_id, "name": name})
         return {"ok": deleted, "tenant_id": tenant_id, "name": name}
 
 

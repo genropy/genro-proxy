@@ -7,6 +7,7 @@ from endpoint classes via method introspection.
 Components:
     POST: Decorator to mark methods as HTTP POST.
     BaseEndpoint: Base class with introspection capabilities.
+    EndpointManager: Discovery and instantiation of endpoints.
 
 Example:
     Define an endpoint::
@@ -18,16 +19,17 @@ Example:
 
             async def list(self, active_only: bool = False) -> list[dict]:
                 \"\"\"List all items.\"\"\"
-                return await self.table.list_all(active_only=active_only)
+                return await self.table.select(where={"active": active_only})
 
             @POST
             async def add(self, id: str, name: str) -> dict:
                 \"\"\"Add a new item.\"\"\"
-                return await self.table.add({"id": id, "name": name})
+                await self.table.insert({"id": id, "name": name})
+                return {"id": id, "name": name}
 
 Note:
-    BaseEndpoint.discover() scans entity packages for endpoint classes
-    and composes them when both exist for an entity.
+    Use EndpointManager.discover() to scan entity packages and instantiate
+    endpoint classes with their corresponding tables.
 """
 
 from __future__ import annotations
@@ -129,11 +131,12 @@ class BaseEndpoint:
         Raises:
             ValueError: If record not found.
         """
-        pkey = self.table.pkey or "id"
-        record = await self.table.select_one(where={pkey: id})
-        if not record:
+        from proxy.sql import RecordNotFoundError
+
+        try:
+            return await self.table.record(pkey=id)
+        except RecordNotFoundError:
             raise ValueError(f"{self.name} '{id}' not found")
-        return record
 
     @POST
     async def add(self, id: str, **data: Any) -> dict[str, Any]:
@@ -281,13 +284,6 @@ class BaseEndpoint:
                 if self._is_complex_type(arg):
                     return True
 
-        if type(ann).__name__ == "UnionType":
-            for arg in get_args(ann):
-                if arg is type(None):
-                    continue
-                if self._is_complex_type(arg):
-                    return True
-
         return False
 
     def count_params(self, method_name: str) -> int:
@@ -310,10 +306,12 @@ class BaseEndpoint:
         return (annotation, default)
 
     async def invoke(self, method_name: str, params: dict[str, Any]) -> Any:
-        """Validate parameters and call endpoint method.
+        """Validate parameters and call endpoint method within a transaction.
 
         Single entry point for all channels (CLI, API, UI, etc.).
         Validates input with Pydantic before executing method.
+        Wraps execution in a database transaction: COMMIT on success,
+        ROLLBACK on exception.
 
         Args:
             method_name: Name of the method to call.
@@ -334,109 +332,9 @@ class BaseEndpoint:
         model_class = self.create_request_model(method_name)
         validated = model_class.model_validate(params)
 
-        # Call method with validated params
-        return await method(**validated.model_dump())
-
-    @classmethod
-    def discover(
-        cls,
-        ce_package: str = "proxy.entities",
-        ee_package: str | None = None,
-    ) -> list[type[BaseEndpoint]]:
-        """Autodiscover all endpoint classes from entities/ directories.
-
-        Scans CE and optionally EE packages for endpoint.py and endpoint_ee.py modules.
-        When both exist for an entity, composes them with EE mixin first.
-
-        Args:
-            ce_package: Base package for CE entity endpoints.
-            ee_package: Optional EE package for extended endpoints.
-
-        Returns:
-            List of endpoint classes ready for instantiation.
-
-        Example:
-            ::
-
-                for endpoint_class in BaseEndpoint.discover():
-                    table = db.table(endpoint_class.name)
-                    endpoint = endpoint_class(table)
-                    register_endpoint(app, endpoint)
-        """
-        ce_modules = cls._find_entity_modules(ce_package, "endpoint")
-        ee_modules = cls._find_entity_modules(ee_package, "endpoint_ee") if ee_package else {}
-
-        endpoints: list[type[BaseEndpoint]] = []
-        for entity_name, ce_module in ce_modules.items():
-            ce_class = cls._get_class_from_module(ce_module, "Endpoint")
-            if not ce_class:
-                continue
-
-            ee_module = ee_modules.get(entity_name)
-            if ee_module:
-                ee_mixin = cls._get_ee_mixin_from_module(ee_module, "_EE")
-                if ee_mixin:
-                    composed_class = type(
-                        ce_class.__name__, (ee_mixin, ce_class), {"__module__": ce_class.__module__}
-                    )
-                    endpoints.append(composed_class)
-                    continue
-
-            endpoints.append(ce_class)
-
-        return endpoints
-
-    @classmethod
-    def _find_entity_modules(cls, base_package: str, module_name: str) -> dict[str, Any]:
-        """Find entity modules in a package."""
-        result: dict[str, Any] = {}
-        try:
-            package = importlib.import_module(base_package)
-        except ImportError:
-            return result
-
-        package_path = getattr(package, "__path__", None)
-        if not package_path:
-            return result
-
-        for _, name, is_pkg in pkgutil.iter_modules(package_path):
-            if not is_pkg:
-                continue
-            full_module_name = f"{base_package}.{name}.{module_name}"
-            try:
-                module = importlib.import_module(full_module_name)
-                result[name] = module
-            except ImportError:
-                pass
-        return result
-
-    @classmethod
-    def _get_class_from_module(cls, module: Any, class_suffix: str) -> type | None:
-        """Extract a class from module by suffix pattern."""
-        for attr_name in dir(module):
-            if attr_name.startswith("_"):
-                continue
-            obj = getattr(module, attr_name)
-            if isinstance(obj, type) and attr_name.endswith(class_suffix):
-                if "_EE" in attr_name or "Mixin" in attr_name:
-                    continue
-                if attr_name in ("BaseEndpoint", "Endpoint"):
-                    continue
-                if not hasattr(obj, "name"):
-                    continue
-                return obj
-        return None
-
-    @classmethod
-    def _get_ee_mixin_from_module(cls, module: Any, class_suffix: str) -> type | None:
-        """Extract an EE mixin class from module."""
-        for name in dir(module):
-            if name.startswith("_"):
-                continue
-            obj = getattr(module, name)
-            if isinstance(obj, type) and name.endswith(class_suffix):
-                return obj
-        return None
+        # Call method within transaction (auto commit/rollback)
+        async with self.table.db.connection():
+            return await method(**validated.model_dump())
 
 
 class EndpointManager:
@@ -450,7 +348,7 @@ class EndpointManager:
         _endpoints: Internal dict of endpoint instances.
     """
 
-    def __init__(self, parent: "ProxyBase"):
+    def __init__(self, parent: ProxyBase):
         """Initialize manager with proxy reference.
 
         Args:

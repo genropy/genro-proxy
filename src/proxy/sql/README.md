@@ -115,16 +115,27 @@ table = db.table("users")
 # CRUD operations
 await table.insert({"id": "u1", "name": "Alice"})
 users = await table.select(where={"active": 1})
-user = await table.select_one(where={"id": "u1"})
+user = await table.record(pkey="u1")  # Get single record by primary key
+user = await table.record(where={"id": "u1"})  # Or by where clause
 await table.update({"active": 0}, where={"id": "u1"})
 await table.delete(where={"id": "u1"})
+
+# Get single record (raises RecordNotFoundError if not found)
+from proxy.sql import RecordNotFoundError
+try:
+    user = await table.record(pkey="u1")
+except RecordNotFoundError:
+    print("User not found")
+
+# Get record or empty dict
+user = await table.record(pkey="u1", ignore_missing=True)  # Returns {} if not found
 
 # Utilities
 exists = await table.exists(where={"id": "u1"})
 count = await table.count(where={"active": 1})
 
 # Record context manager (upsert pattern)
-async with table.record("u1", insert_missing=True) as rec:
+async with table.record_to_update("u1", insert_missing=True) as rec:
     rec["name"] = "Alice"
     rec["active"] = 1
 # Automatically inserts or updates
@@ -413,7 +424,7 @@ db = proxy.db  # Tables get key via db.encryption_key
 
 # Encrypted fields are automatically encrypted on write, decrypted on read
 await table.insert({"id": "1", "secret": "sensitive data"})
-record = await table.select_one(where={"id": "1"})
+record = await table.record(pkey="1")
 print(record["secret"])  # "sensitive data" (decrypted)
 ```
 

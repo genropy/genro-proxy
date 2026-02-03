@@ -8,6 +8,8 @@ EE extends with full multi-tenant management via mixin.
 
 from __future__ import annotations
 
+import hashlib
+import secrets
 from typing import Any
 
 from ...sql import Integer, String, Table, Timestamp
@@ -16,7 +18,8 @@ from ...sql import Integer, String, Table, Timestamp
 class TenantsTable(Table):
     """Tenant configuration storage table.
 
-    Schema: id (PK), name, client_auth (JSON), client_base_url, active, etc.
+    Schema: id (PK), name, client_auth, client_base_url, config (JSON),
+    active, api_key_hash, api_key_expires_at, timestamps.
     """
 
     name = "tenants"
@@ -29,120 +32,66 @@ class TenantsTable(Table):
         c.column("name", String)
         c.column("client_auth", String, json_encoded=True)
         c.column("client_base_url", String)
-        c.column("client_sync_path", String)
-        c.column("client_attachment_path", String)
-        c.column("rate_limits", String, json_encoded=True)
-        c.column("large_file_config", String, json_encoded=True)
+        c.column("config", String, json_encoded=True)
         c.column("active", Integer, default=1)
-        c.column("suspended_batches", String)
         c.column("api_key_hash", String)
         c.column("api_key_expires_at", Timestamp)
         c.column("created_at", Timestamp, default="CURRENT_TIMESTAMP")
         c.column("updated_at", Timestamp, default="CURRENT_TIMESTAMP")
-
-    async def get(self, tenant_id: str) -> dict[str, Any] | None:
-        """Fetch a tenant configuration by ID."""
-        tenant = await self.select_one(where={"id": tenant_id})
-        if not tenant:
-            return None
-        return self._decode_active(tenant)
 
     def _decode_active(self, tenant: dict[str, Any]) -> dict[str, Any]:
         """Convert active INTEGER to bool."""
         tenant["active"] = bool(tenant.get("active", 1))
         return tenant
 
-    def is_batch_suspended(self, suspended_batches: str | None, batch_code: str | None) -> bool:
-        """Check if a batch is suspended.
-
-        - "*" suspends all messages regardless of batch_code
-        - Messages without batch_code are only suspended by "*"
-        - Specific batch codes must match exactly
-        """
-        if not suspended_batches:
-            return False
-        if suspended_batches == "*":
-            return True
-        if batch_code is None:
-            return False
-        suspended_set = set(suspended_batches.split(","))
-        return batch_code in suspended_set
-
     async def ensure_default(self) -> None:
         """Ensure the 'default' tenant exists for CE single-tenant mode."""
-        async with self.record("default", insert_missing=True) as rec:
+        async with self.record_to_update("default", insert_missing=True) as rec:
             if not rec.get("name"):
                 rec["name"] = "Default Tenant"
                 rec["active"] = 1
 
-    async def suspend_batch(self, tenant_id: str, batch_code: str | None = None) -> bool:
-        """Suspend sending for a tenant.
+    async def create_api_key(self, tenant_id: str, expires_at: int | None = None) -> str:
+        """Generate and store a new API key for a tenant.
 
         Args:
             tenant_id: Tenant identifier.
-            batch_code: Batch to suspend. If None, suspends all ("*").
+            expires_at: Unix timestamp for key expiration (None = never expires).
 
         Returns:
-            True if tenant found and updated, False if not found.
+            The generated API key (only returned once, store securely).
         """
-        async with self.record(tenant_id) as rec:
-            if not rec:
-                return False
+        api_key = secrets.token_urlsafe(32)
+        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
 
-            if batch_code is None:
-                rec["suspended_batches"] = "*"
-            else:
-                current = rec.get("suspended_batches") or ""
-                if current == "*":
-                    return True
-                batches = set(current.split(",")) if current else set()
-                batches.discard("")
-                batches.add(batch_code)
-                rec["suspended_batches"] = ",".join(sorted(batches))
+        async with self.record_to_update(tenant_id) as rec:
+            rec["api_key_hash"] = key_hash
+            rec["api_key_expires_at"] = expires_at
 
-        return True
+        return api_key
 
-    async def activate_batch(self, tenant_id: str, batch_code: str | None = None) -> bool:
-        """Resume sending for a tenant.
+    async def get_tenant_by_token(self, api_key: str) -> dict[str, Any] | None:
+        """Find tenant by API key.
 
         Args:
-            tenant_id: Tenant identifier.
-            batch_code: Batch to activate. If None, clears all suspensions.
+            api_key: The API key to look up.
 
         Returns:
-            True if updated successfully, False if not found or cannot remove.
+            Tenant dict if found and key is valid/not expired, None otherwise.
         """
-        async with self.record(tenant_id) as rec:
-            if not rec:
-                return False
+        import time
 
-            if batch_code is None:
-                rec["suspended_batches"] = None
-            else:
-                current = rec.get("suspended_batches") or ""
-                if current == "*":
-                    return False
-                batches = set(current.split(",")) if current else set()
-                batches.discard("")
-                batches.discard(batch_code)
-                rec["suspended_batches"] = ",".join(sorted(batches)) if batches else None
+        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        tenant = await self.record(where={"api_key_hash": key_hash}, ignore_missing=True)
 
-        return True
-
-    async def get_suspended_batches(self, tenant_id: str) -> set[str]:
-        """Get suspended batch codes for a tenant."""
-        tenant = await self.get(tenant_id)
         if not tenant:
-            return set()
+            return None
 
-        suspended = tenant.get("suspended_batches") or ""
-        if not suspended:
-            return set()
-        if suspended == "*":
-            return {"*"}
-        batches = set(suspended.split(","))
-        batches.discard("")
-        return batches
+        expires_at = tenant.get("api_key_expires_at")
+        if expires_at and expires_at < int(time.time()):
+            return None
+
+        return self._decode_active(tenant)
 
 
 __all__ = ["TenantsTable"]

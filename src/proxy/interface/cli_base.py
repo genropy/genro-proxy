@@ -42,9 +42,12 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Callable
-from typing import Any, Literal, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Literal, get_args, get_origin
 
 import click
+
+if TYPE_CHECKING:
+    from .cli_context import CliContext
 from rich.console import Console
 from rich.table import Table
 
@@ -111,7 +114,10 @@ def _annotation_to_click_type(annotation: Any) -> type | click.Choice:
 
 
 def _create_click_command(
-    endpoint: Any, method_name: str, run_async: Callable
+    endpoint: Any,
+    method_name: str,
+    run_async: Callable,
+    cli_context: CliContext | None = None,
 ) -> click.Command:
     """Create a Click command from an endpoint method.
 
@@ -119,6 +125,7 @@ def _create_click_command(
         endpoint: Endpoint instance with the method.
         method_name: Name of the method to wrap.
         run_async: Function to run async code (e.g., asyncio.run).
+        cli_context: Optional CliContext for tenant resolution.
 
     Returns:
         Click command ready to be added to a group.
@@ -127,7 +134,9 @@ def _create_click_command(
         Uses endpoint.call() for unified Pydantic validation.
         tenant_id is treated specially: optional positional with context fallback.
     """
-    from .cli_context import require_context
+    from .cli_context import CliContext
+
+    ctx = cli_context or CliContext()
 
     method = getattr(endpoint, method_name)
     sig = inspect.signature(method)
@@ -179,7 +188,7 @@ def _create_click_command(
 
         # Resolve tenant_id from context if not provided
         if has_tenant_id and not py_kwargs.get("tenant_id"):
-            _, tenant = require_context(require_tenant=True)
+            _, tenant = ctx.require_context(require_tenant=True)
             py_kwargs["tenant_id"] = tenant
 
         # Use endpoint.invoke() for unified Pydantic validation
@@ -197,7 +206,10 @@ def _create_click_command(
 
 
 def register_endpoint(
-    group: click.Group, endpoint: Any, run_async: Callable | None = None
+    group: click.Group,
+    endpoint: Any,
+    run_async: Callable | None = None,
+    cli_context: CliContext | None = None,
 ) -> click.Group:
     """Register all methods of an endpoint as Click commands.
 
@@ -208,6 +220,7 @@ def register_endpoint(
         group: Click group to add commands to.
         endpoint: Endpoint instance with async methods.
         run_async: Function to run async code. Defaults to asyncio.run.
+        cli_context: Optional CliContext for tenant resolution.
 
     Returns:
         The created Click subgroup with all endpoint commands.
@@ -247,7 +260,7 @@ def register_endpoint(
         if not callable(method) or not inspect.iscoroutinefunction(method):
             continue
 
-        cmd = _create_click_command(endpoint, method_name, run_async)
+        cmd = _create_click_command(endpoint, method_name, run_async, cli_context)
         cmd.name = method_name.replace("_", "-")
         endpoint_group.add_command(cmd)
 
@@ -257,8 +270,11 @@ def register_endpoint(
 class CliManager:
     """Manager for Click CLI application. Creates CLI lazily on first access."""
 
-    def __init__(self, parent: Any):
+    def __init__(self, parent: Any, cli_context: CliContext | None = None):
+        from .cli_context import CliContext
+
         self.proxy = parent
+        self.cli_context = cli_context or CliContext()
         self._cli: click.Group | None = None
 
     @property
@@ -279,7 +295,7 @@ class CliManager:
 
         # Register endpoint-based commands
         for endpoint in self.proxy.endpoints.values():
-            register_endpoint(cli, endpoint)
+            register_endpoint(cli, endpoint, cli_context=self.cli_context)
 
         # Add serve command
         @cli.command("serve")

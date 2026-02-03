@@ -10,10 +10,6 @@ The base table provides only generic fields. Domain-specific proxies
 
 from __future__ import annotations
 
-from typing import Any
-
-from genro_toolbox import get_uuid
-
 from ...sql import String, Table, Timestamp
 
 
@@ -45,56 +41,6 @@ class AccountsTable(Table):
         c.column("config", String, json_encoded=True, encrypted=True)
         c.column("created_at", Timestamp, default="CURRENT_TIMESTAMP")
         c.column("updated_at", Timestamp, default="CURRENT_TIMESTAMP")
-
-    async def add(self, acc: dict[str, Any]) -> str:
-        """Insert or update an account configuration.
-
-        Args:
-            acc: Account configuration dict with keys:
-                - id (required): Client account identifier.
-                - tenant_id (required): Owning tenant ID.
-                - name: Display name.
-                - config: JSON-serializable configuration dict.
-
-        Returns:
-            The account's internal UUID (pk).
-        """
-        tenant_id = acc["tenant_id"]
-        account_id = acc["id"]
-
-        async with self.record(
-            {"tenant_id": tenant_id, "id": account_id},
-            insert_missing=True,
-        ) as rec:
-            if "pk" not in rec:
-                rec["pk"] = get_uuid()
-
-            rec["name"] = acc.get("name") or account_id
-            rec["config"] = acc.get("config")
-            pk = rec["pk"]
-
-        return pk
-
-    async def get(self, tenant_id: str, account_id: str) -> dict[str, Any]:
-        """Retrieve a single account by tenant and ID.
-
-        Raises:
-            ValueError: If account not found for this tenant.
-        """
-        account = await self.select_one(where={"tenant_id": tenant_id, "id": account_id})
-        if not account:
-            raise ValueError(f"Account '{account_id}' not found for tenant '{tenant_id}'")
-        return account
-
-    async def list_all(self, tenant_id: str | None = None) -> list[dict[str, Any]]:
-        """List accounts, optionally filtered by tenant."""
-        if tenant_id:
-            return await self.select(where={"tenant_id": tenant_id}, order_by="id")
-        return await self.select(order_by="id")
-
-    async def remove(self, tenant_id: str, account_id: str) -> None:
-        """Delete an account."""
-        await self.delete(where={"tenant_id": tenant_id, "id": account_id})
 
     async def sync_schema(self) -> None:
         """Sync schema and ensure UNIQUE index."""

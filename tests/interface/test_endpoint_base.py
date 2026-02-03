@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import inspect
+from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
@@ -11,8 +12,20 @@ import pytest
 from proxy.interface.endpoint_base import POST, BaseEndpoint
 
 
+class MockDb:
+    """Mock database for testing with connection() context manager."""
+
+    @asynccontextmanager
+    async def connection(self):
+        """Mock connection context manager (no-op for tests)."""
+        yield self
+
+
 class MockTable:
     """Mock table for testing."""
+
+    def __init__(self):
+        self.db = MockDb()
 
     async def list_all(self, **kwargs):
         return [{"id": "1"}]
@@ -235,19 +248,32 @@ class TestIsSimpleParamsEdgeCases:
         assert endpoint.is_simple_params("method_no_hints") is True
 
 
-class TestEndpointDiscoveryFilters:
-    """Tests for endpoint discovery filtering logic."""
+class MockProxy:
+    """Mock proxy for EndpointManager testing."""
 
-    def test_get_class_from_module_filters_base_classes(self):
+    def __init__(self):
+        self.db = MockDb()
+
+
+class TestEndpointDiscoveryFilters:
+    """Tests for endpoint discovery filtering logic in EndpointManager."""
+
+    @pytest.fixture
+    def manager(self):
+        """Create EndpointManager with mock proxy."""
+        from proxy.interface.endpoint_base import EndpointManager
+
+        return EndpointManager(MockProxy())
+
+    def test_get_class_from_module_filters_base_classes(self, manager):
         """_get_class_from_module should filter out BaseEndpoint."""
-        # Create a mock module with BaseEndpoint
         mock_module = type('MockModule', (), {})()
         mock_module.BaseEndpoint = BaseEndpoint
 
-        result = BaseEndpoint._get_class_from_module(mock_module, "Endpoint")
+        result = manager._get_class_from_module(mock_module, "Endpoint")
         assert result is None
 
-    def test_get_class_from_module_filters_private_classes(self):
+    def test_get_class_from_module_filters_private_classes(self, manager):
         """_get_class_from_module should filter out private classes."""
         mock_module = type('MockModule', (), {})()
 
@@ -256,10 +282,10 @@ class TestEndpointDiscoveryFilters:
 
         mock_module._PrivateEndpoint = _PrivateEndpoint
 
-        result = BaseEndpoint._get_class_from_module(mock_module, "Endpoint")
+        result = manager._get_class_from_module(mock_module, "Endpoint")
         assert result is None
 
-    def test_get_class_from_module_filters_ee_classes(self):
+    def test_get_class_from_module_filters_ee_classes(self, manager):
         """_get_class_from_module should filter out _EE classes."""
         mock_module = type('MockModule', (), {})()
 
@@ -268,10 +294,10 @@ class TestEndpointDiscoveryFilters:
 
         mock_module.TestEndpoint_EE = TestEndpoint_EE
 
-        result = BaseEndpoint._get_class_from_module(mock_module, "Endpoint")
+        result = manager._get_class_from_module(mock_module, "Endpoint")
         assert result is None
 
-    def test_get_class_from_module_filters_classes_without_name(self):
+    def test_get_class_from_module_filters_classes_without_name(self, manager):
         """_get_class_from_module should filter out classes without name attr."""
         mock_module = type('MockModule', (), {})()
 
@@ -280,10 +306,10 @@ class TestEndpointDiscoveryFilters:
 
         mock_module.NoNameEndpoint = NoNameEndpoint
 
-        result = BaseEndpoint._get_class_from_module(mock_module, "Endpoint")
+        result = manager._get_class_from_module(mock_module, "Endpoint")
         assert result is None
 
-    def test_get_ee_mixin_from_module_returns_mixin(self):
+    def test_get_ee_mixin_from_module_returns_mixin(self, manager):
         """_get_ee_mixin_from_module should find _EE mixin."""
         mock_module = type('MockModule', (), {})()
 
@@ -292,10 +318,10 @@ class TestEndpointDiscoveryFilters:
 
         mock_module.MyEndpoint_EE = MyEndpoint_EE
 
-        result = BaseEndpoint._get_ee_mixin_from_module(mock_module, "_EE")
+        result = manager._get_ee_mixin_from_module(mock_module, "_EE")
         assert result is MyEndpoint_EE
 
-    def test_get_ee_mixin_from_module_filters_private(self):
+    def test_get_ee_mixin_from_module_filters_private(self, manager):
         """_get_ee_mixin_from_module should filter private classes."""
         mock_module = type('MockModule', (), {})()
 
@@ -304,10 +330,10 @@ class TestEndpointDiscoveryFilters:
 
         mock_module._PrivateEndpoint_EE = _PrivateEndpoint_EE
 
-        result = BaseEndpoint._get_ee_mixin_from_module(mock_module, "_EE")
+        result = manager._get_ee_mixin_from_module(mock_module, "_EE")
         assert result is None
 
-    def test_get_ee_mixin_from_module_returns_none_when_not_found(self):
+    def test_get_ee_mixin_from_module_returns_none_when_not_found(self, manager):
         """_get_ee_mixin_from_module should return None if no mixin."""
         mock_module = type('MockModule', (), {})()
 
@@ -316,7 +342,7 @@ class TestEndpointDiscoveryFilters:
 
         mock_module.SomeClass = SomeClass
 
-        result = BaseEndpoint._get_ee_mixin_from_module(mock_module, "_EE")
+        result = manager._get_ee_mixin_from_module(mock_module, "_EE")
         assert result is None
 
 

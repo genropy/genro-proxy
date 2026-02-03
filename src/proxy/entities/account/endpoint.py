@@ -79,9 +79,14 @@ class AccountEndpoint(BaseEndpoint):
         Returns:
             Complete account record after insert/update.
         """
-        data = {k: v for k, v in locals().items() if k != "self"}
-        await self.table.add(data)
-        return await self.table.get(tenant_id, id)
+        async with self.table.record_to_update(
+            {"tenant_id": tenant_id, "id": id},
+            insert_missing=True,
+        ) as rec:
+            rec["name"] = name or id
+            rec["config"] = config
+
+        return await self.get(tenant_id, id)
 
     async def get(self, tenant_id: str, account_id: str) -> dict:
         """Retrieve a single account by tenant and ID.
@@ -96,7 +101,12 @@ class AccountEndpoint(BaseEndpoint):
         Raises:
             ValueError: If account not found.
         """
-        return await self.table.get(tenant_id, account_id)
+        from proxy.sql import RecordNotFoundError
+
+        try:
+            return await self.table.record(where={"tenant_id": tenant_id, "id": account_id})
+        except RecordNotFoundError:
+            raise ValueError(f"Account '{account_id}' not found for tenant '{tenant_id}'")
 
     async def list(self, tenant_id: str) -> list[dict]:
         """List all accounts for a tenant.
@@ -107,17 +117,20 @@ class AccountEndpoint(BaseEndpoint):
         Returns:
             List of account dicts ordered by ID.
         """
-        return await self.table.list_all(tenant_id=tenant_id)
+        return await self.table.select(where={"tenant_id": tenant_id}, order_by="id")
 
     @POST
-    async def delete(self, tenant_id: str, account_id: str) -> None:
+    async def delete(self, tenant_id: str, account_id: str) -> int:
         """Delete an account.
 
         Args:
             tenant_id: Tenant that owns the account.
             account_id: Account identifier to delete.
+
+        Returns:
+            Number of deleted rows (0 or 1).
         """
-        await self.table.remove(tenant_id, account_id)
+        return await self.table.delete(where={"tenant_id": tenant_id, "id": account_id})
 
 
 __all__ = ["AccountEndpoint"]

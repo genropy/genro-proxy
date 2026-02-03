@@ -74,7 +74,7 @@ from .adapters import DbAdapter, get_adapter
 from .column import Boolean, Column, Columns, Integer, String, Timestamp
 from .query import Query, WhereBuilder
 from .sqldb import SqlDb
-from .table import Table
+from .table import RecordDuplicateError, RecordNotFoundError, Table
 
 __all__ = [
     # Main classes
@@ -82,6 +82,9 @@ __all__ = [
     "Table",
     "Query",
     "WhereBuilder",
+    # Exceptions
+    "RecordNotFoundError",
+    "RecordDuplicateError",
     # Column definitions
     "Column",
     "Columns",

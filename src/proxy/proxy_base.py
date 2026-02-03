@@ -143,7 +143,11 @@ class ProxyBase:
         return self.encryption.key
 
     async def init(self) -> None:
-        """Initialize database: connect and create tables."""
+        """Initialize database: connect, create tables, then commit and release.
+
+        This uses a single transaction to set up schema. The connection is
+        released after initialization, ready for per-request transactions.
+        """
         await self.db.connect()
         await self.db.check_structure()
 
@@ -153,9 +157,12 @@ class ProxyBase:
             if hasattr(table, "sync_schema"):
                 await table.sync_schema()
 
-    async def close(self) -> None:
-        """Close database connection."""
+        # COMMIT schema changes and release connection
         await self.db.close()
+
+    async def shutdown(self) -> None:
+        """Shutdown application: close database pool/connection."""
+        await self.db.shutdown()
 
 
 __all__ = ["ProxyBase", "ProxyConfigBase", "config_from_env"]

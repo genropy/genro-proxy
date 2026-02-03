@@ -46,9 +46,8 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
-
 
 # Default configuration
 _DEFAULT_BASE_DIR = Path.home() / ".gproxy"
@@ -232,7 +231,7 @@ class CliContext:
         if not instance:
             instances = self.list_instances()
             if not instances:
-                self._print(f"Error: No instances configured.")
+                self._print("Error: No instances configured.")
                 self._print(f"Use '{self.cli_name} serve <name>' to create one.")
                 sys.exit(1)
 
@@ -257,44 +256,4 @@ class CliContext:
         return instance, tenant
 
 
-# Default instance for simple usage
-_default_context = CliContext()
-
-
-def resolve_context(
-    explicit_instance: str | None = None,
-    explicit_tenant: str | None = None,
-) -> tuple[str | None, str | None]:
-    """Resolve active instance and tenant using default configuration."""
-    return _default_context.resolve_context(explicit_instance, explicit_tenant)
-
-
-def require_context(
-    explicit_instance: str | None = None,
-    explicit_tenant: str | None = None,
-    require_tenant: bool = False,
-) -> tuple[str, str | None]:
-    """Resolve context or exit with error using default configuration."""
-    return _default_context.require_context(
-        explicit_instance, explicit_tenant, require_tenant
-    )
-
-
-def get_default_context() -> CliContext:
-    """Get the default CliContext instance."""
-    return _default_context
-
-
-def set_default_context(ctx: CliContext) -> None:
-    """Set the default CliContext instance."""
-    global _default_context
-    _default_context = ctx
-
-
-__all__ = [
-    "CliContext",
-    "resolve_context",
-    "require_context",
-    "get_default_context",
-    "set_default_context",
-]
+__all__ = ["CliContext"]

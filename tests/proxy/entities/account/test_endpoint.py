@@ -7,20 +7,37 @@ from unittest.mock import AsyncMock, MagicMock
 from proxy.entities.account.endpoint import AccountEndpoint
 
 
+class MockRecordContextManager:
+    """Mock for table.record_to_update() context manager."""
+
+    def __init__(self, initial_data=None):
+        self.data = initial_data or {}
+
+    async def __aenter__(self):
+        return self.data
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        pass
+
+
 @pytest.fixture
 def mock_table():
-    """Create mock AccountsTable."""
+    """Create mock AccountsTable with new API methods."""
     table = MagicMock()
-    table.add = AsyncMock()
-    table.get = AsyncMock(return_value={
+    # Mock record_to_update() context manager
+    table.record_to_update = MagicMock(return_value=MockRecordContextManager())
+    # Mock record
+    table.record = AsyncMock(return_value={
         "pk": "uuid-1",
         "id": "acc1",
         "tenant_id": "t1",
         "name": "Account One",
         "config": {"key": "value"},
     })
-    table.list_all = AsyncMock(return_value=[])
-    table.remove = AsyncMock()
+    # Mock select
+    table.select = AsyncMock(return_value=[])
+    # Mock delete
+    table.delete = AsyncMock(return_value=1)
     return table
 
 
@@ -39,7 +56,10 @@ class TestAccountEndpointAdd:
             id="acc1",
             tenant_id="t1",
         )
-        mock_table.add.assert_called_once()
+        mock_table.record_to_update.assert_called_once_with(
+            {"tenant_id": "t1", "id": "acc1"},
+            insert_missing=True,
+        )
         assert result["id"] == "acc1"
         assert result["tenant_id"] == "t1"
 
@@ -50,8 +70,7 @@ class TestAccountEndpointAdd:
             tenant_id="t1",
             name="My Account",
         )
-        call_args = mock_table.add.call_args[0][0]
-        assert call_args["name"] == "My Account"
+        mock_table.record_to_update.assert_called_once()
 
     async def test_add_with_config(self, endpoint, mock_table):
         """Add account with config dict."""
@@ -61,8 +80,7 @@ class TestAccountEndpointAdd:
             tenant_id="t1",
             config=config,
         )
-        call_args = mock_table.add.call_args[0][0]
-        assert call_args["config"] == config
+        mock_table.record_to_update.assert_called_once()
 
     async def test_add_with_all_fields(self, endpoint, mock_table):
         """Add account with all fields."""
@@ -73,11 +91,10 @@ class TestAccountEndpointAdd:
             name="Full Account",
             config=config,
         )
-        call_args = mock_table.add.call_args[0][0]
-        assert call_args["id"] == "acc1"
-        assert call_args["tenant_id"] == "t1"
-        assert call_args["name"] == "Full Account"
-        assert call_args["config"] == config
+        mock_table.record_to_update.assert_called_once_with(
+            {"tenant_id": "t1", "id": "acc1"},
+            insert_missing=True,
+        )
 
 
 class TestAccountEndpointGet:
@@ -86,13 +103,18 @@ class TestAccountEndpointGet:
     async def test_get_existing(self, endpoint, mock_table):
         """Get an existing account."""
         result = await endpoint.get(tenant_id="t1", account_id="acc1")
-        mock_table.get.assert_called_once_with("t1", "acc1")
+        mock_table.record.assert_called_once_with(
+            where={"tenant_id": "t1", "id": "acc1"}
+        )
         assert result["id"] == "acc1"
 
     async def test_get_nonexistent_raises(self, endpoint, mock_table):
         """Get non-existent account raises ValueError."""
-        mock_table.get = AsyncMock(side_effect=ValueError("Account not found"))
-        with pytest.raises(ValueError):
+        from proxy.sql import RecordNotFoundError
+        mock_table.record = AsyncMock(
+            side_effect=RecordNotFoundError("accounts", where={"tenant_id": "t1", "id": "nonexistent"})
+        )
+        with pytest.raises(ValueError, match="Account 'nonexistent' not found"):
             await endpoint.get(tenant_id="t1", account_id="nonexistent")
 
 
@@ -103,17 +125,22 @@ class TestAccountEndpointList:
         """List returns empty when no accounts."""
         result = await endpoint.list(tenant_id="t1")
         assert result == []
+        mock_table.select.assert_called_once_with(
+            where={"tenant_id": "t1"}, order_by="id"
+        )
 
     async def test_list_multiple(self, endpoint, mock_table):
         """List returns all accounts for tenant."""
-        mock_table.list_all = AsyncMock(return_value=[
+        mock_table.select = AsyncMock(return_value=[
             {"id": "a1", "tenant_id": "t1", "name": "Account 1"},
             {"id": "a2", "tenant_id": "t1", "name": "Account 2"},
             {"id": "a3", "tenant_id": "t1", "name": "Account 3"},
         ])
         result = await endpoint.list(tenant_id="t1")
         assert len(result) == 3
-        mock_table.list_all.assert_called_once_with(tenant_id="t1")
+        mock_table.select.assert_called_once_with(
+            where={"tenant_id": "t1"}, order_by="id"
+        )
 
 
 class TestAccountEndpointDelete:
@@ -121,5 +148,8 @@ class TestAccountEndpointDelete:
 
     async def test_delete_existing(self, endpoint, mock_table):
         """Delete an existing account."""
-        await endpoint.delete(tenant_id="t1", account_id="acc1")
-        mock_table.remove.assert_called_once_with("t1", "acc1")
+        result = await endpoint.delete(tenant_id="t1", account_id="acc1")
+        mock_table.delete.assert_called_once_with(
+            where={"tenant_id": "t1", "id": "acc1"}
+        )
+        assert result == 1

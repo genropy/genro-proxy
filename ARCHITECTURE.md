@@ -59,6 +59,7 @@ genro-proxy/src/proxy/
 │   ├── __init__.py
 │   ├── api_base.py        # FastAPI factory
 │   ├── cli_base.py        # Click CLI factory
+│   ├── cli_context.py     # CLI context resolution (instance/tenant)
 │   └── endpoint_base.py   # BaseEndpoint class
 └── entities/              # Entità base
     ├── __init__.py
@@ -219,13 +220,14 @@ class ProxyBase:
 | `name` | STRING | Display name |
 | `client_auth` | STRING (JSON) | Auth per callbacks |
 | `client_base_url` | STRING | Base URL callbacks |
+| `config` | STRING (JSON) | Configurazione flessibile |
 | `active` | INTEGER | 0/1 status |
 | `api_key_hash` | STRING | SHA256 hash API key |
 | `api_key_expires_at` | TIMESTAMP | Scadenza API key |
 | `created_at` | TIMESTAMP | |
 | `updated_at` | TIMESTAMP | |
 
-**Metodi base**: `get()`, `add()`, `remove()`, `list_all()`, `ensure_default()`, `create_api_key()`, `get_tenant_by_token()`
+**Metodi base**: `get()`, `add()`, `remove()`, `list_all()`, `update_fields()`, `ensure_default()`, `create_api_key()`, `get_tenant_by_token()`
 
 ---
 
@@ -237,12 +239,11 @@ class ProxyBase:
 | `id` | STRING | Client account ID |
 | `tenant_id` | STRING | FK → tenants |
 | `name` | STRING | Display name |
-| `active` | INTEGER | 0/1 status |
 | `config` | STRING (JSON) | Configurazione flessibile |
 | `created_at` | TIMESTAMP | |
 | `updated_at` | TIMESTAMP | |
 
-**Metodi base**: `get()`, `add()`, `remove()`, `list_by_tenant()`
+**Metodi base**: `get()`, `add()`, `remove()`, `list_all()`
 
 ---
 
@@ -293,7 +294,6 @@ class AccountsTableBase(Table):
         id=Column(String),
         tenant_id=Column(String).relation("tenants.id"),
         name=Column(String),
-        active=Column(Integer, default=1),
         config=Column(String, json_encoded=True),
         created_at=Column(Timestamp),
         updated_at=Column(Timestamp),
@@ -307,6 +307,7 @@ class AccountsTable(AccountsTableBase):
         user=Column(String),
         password=Column(String, encrypted=True),
         use_tls=Column(Integer),
+        active=Column(Integer, default=1),  # mail-specific: enable/disable account
         limit_per_minute=Column(Integer),
         # ... altre colonne SMTP
     )

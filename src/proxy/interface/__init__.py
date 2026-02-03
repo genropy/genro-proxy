@@ -24,25 +24,40 @@ Example:
                 return await self.table.add({"id": id, "name": name})
 """
 
-from .api_base import ApiManager, register_api_endpoint
+from .api_base import (
+    API_TOKEN_HEADER,
+    ApiManager,
+    admin_dependency,
+    auth_dependency,
+    register_api_endpoint,
+    require_admin_token,
+    require_token,
+)
 from .cli_base import CliManager, console, register_endpoint
-from .cli_context import CliContext, require_context, resolve_context
+from .cli_context import CliContext
 from .endpoint_base import POST, BaseEndpoint, EndpointManager
 from .repl import REPLWrapper, repl_wrap, reserved
 
 __all__ = [
+    # API
+    "API_TOKEN_HEADER",
     "ApiManager",
-    "BaseEndpoint",
+    "admin_dependency",
+    "auth_dependency",
+    "register_api_endpoint",
+    "require_admin_token",
+    "require_token",
+    # CLI
     "CliContext",
     "CliManager",
+    "console",
+    "register_endpoint",
+    # Endpoints
+    "BaseEndpoint",
     "EndpointManager",
     "POST",
+    # REPL
     "REPLWrapper",
-    "console",
-    "register_api_endpoint",
-    "register_endpoint",
     "repl_wrap",
-    "require_context",
     "reserved",
-    "resolve_context",
 ]
