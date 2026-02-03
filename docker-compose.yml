@@ -3,16 +3,24 @@
 # Docker Compose for genro-proxy development and testing.
 #
 # Usage:
-#   # Start PostgreSQL for tests:
+#   # Start all services:
 #   docker compose up -d
 #
-#   # Run tests with PostgreSQL:
-#   pytest tests/sql/
+#   # Start only specific services:
+#   docker compose up -d db minio
+#
+#   # Run tests:
+#   pytest tests/
 #
 #   # Stop and cleanup:
 #   docker compose down -v
 #
-# Connection: postgresql://proxy:testpassword@localhost:5433/proxy
+# Connections:
+#   PostgreSQL: postgresql://proxy:testpassword@localhost:5433/proxy
+#   MinIO (S3): http://localhost:9000 (access: minioadmin, secret: minioadmin)
+#   MinIO Console: http://localhost:9001
+#   Azurite (Azure): http://localhost:10000 (account: devstoreaccount1)
+#   GCS Fake: http://localhost:4443
 
 services:
   # ============================================
@@ -33,5 +41,107 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # ============================================
+  # MinIO - S3-compatible object storage
+  # ============================================
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Create default bucket on startup
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin;
+      mc mb local/test-bucket --ignore-existing;
+      mc anonymous set public local/test-bucket;
+      exit 0;
+      "
+
+  # ============================================
+  # Azurite - Azure Storage Emulator
+  # ============================================
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    command: azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0
+    ports:
+      - "10000:10000"  # Blob service
+      - "10001:10001"  # Queue service
+      - "10002:10002"  # Table service
+    volumes:
+      - azurite_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:10000/ || exit 0"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Create test container for Azurite
+  azurite-init:
+    image: mcr.microsoft.com/azure-cli:latest
+    depends_on:
+      azurite:
+        condition: service_healthy
+    environment:
+      AZURE_STORAGE_CONNECTION_STRING: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;"
+    entrypoint: >
+      /bin/sh -c "
+      az storage container create --name test-container 2>/dev/null || true;
+      exit 0;
+      "
+
+  # ============================================
+  # Fake GCS Server - Google Cloud Storage Emulator
+  # ============================================
+  gcs:
+    image: fsouza/fake-gcs-server:latest
+    command: -scheme http -port 4443 -external-url http://localhost:4443
+    ports:
+      - "4443:4443"
+    volumes:
+      - gcs_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4443/storage/v1/b"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Create test bucket for fake-gcs-server
+  gcs-init:
+    image: curlimages/curl:latest
+    depends_on:
+      gcs:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      curl -X POST 'http://gcs:4443/storage/v1/b?project=test-project' \
+        -H 'Content-Type: application/json' \
+        -d '{\"name\": \"test-bucket\"}' 2>/dev/null || true;
+      exit 0;
+      "
+
 volumes:
   pgdata:
+  minio_data:
+  azurite_data:
+  gcs_data:
