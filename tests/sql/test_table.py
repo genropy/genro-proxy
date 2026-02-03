@@ -421,15 +421,14 @@ class TestRecordUpdater:
             "pk": "pk-acc1",
             "id": "acc1",
             "tenant_id": "t1",
-            "host": "smtp.test.com",
-            "port": 587,
+            "name": "Original Account",
         })
 
         async with accounts.record({"tenant_id": "t1", "id": "acc1"}) as rec:
-            rec["host"] = "smtp.updated.com"
+            rec["name"] = "Updated Account"
 
         result = await accounts.select_one(where={"tenant_id": "t1", "id": "acc1"})
-        assert result["host"] == "smtp.updated.com"
+        assert result["name"] == "Updated Account"
 
     async def test_record_without_for_update(self, pg_db):
         """Record without FOR UPDATE uses regular select."""
