@@ -360,6 +360,9 @@ class EndpointManager:
     def discover(self, *packages: str, ee_packages: list[str] | None = None) -> list[BaseEndpoint]:
         """Discover and instantiate endpoints from entity packages.
 
+        When multiple packages define endpoints with the same name, the most
+        derived class (per MRO) is used.
+
         Args:
             *packages: CE packages to scan for endpoints.
             ee_packages: Optional EE packages for mixin composition.
@@ -369,6 +372,8 @@ class EndpointManager:
         """
         ee_package = ee_packages[0] if ee_packages else None
 
+        # Phase 1: Collect all endpoint classes from all packages
+        all_classes: dict[str, type] = {}
         for package in packages:
             ce_modules = self._find_entity_modules(package, "endpoint")
             ee_modules = self._find_entity_modules(ee_package, "endpoint_ee") if ee_package else {}
@@ -387,10 +392,28 @@ class EndpointManager:
                             ce_class.__name__, (ee_mixin, ce_class), {"__module__": ce_class.__module__}
                         )
 
-                # Instantiate endpoint with table from db
-                table = self.proxy.db.table(endpoint_class.name)
-                endpoint = endpoint_class(table)
-                self._endpoints[endpoint_class.name] = endpoint
+                name = endpoint_class.name
+                existing = all_classes.get(name)
+                if existing is None:
+                    all_classes[name] = endpoint_class
+                elif issubclass(endpoint_class, existing):
+                    # New class is more derived, replace
+                    all_classes[name] = endpoint_class
+                # else: existing is same or more derived, keep it
+
+        # Phase 2: Instantiate or replace with more derived classes
+        for endpoint_class in all_classes.values():
+            name = endpoint_class.name
+            existing = self._endpoints.get(name)
+            if existing is None:
+                # New endpoint
+                table = self.proxy.db.table(name)
+                self._endpoints[name] = endpoint_class(table)
+            elif endpoint_class is not type(existing) and issubclass(endpoint_class, type(existing)):
+                # New class is strictly more derived, replace existing
+                table = self.proxy.db.table(name)
+                self._endpoints[name] = endpoint_class(table)
+            # else: existing is same or more derived, keep it
 
         return list(self._endpoints.values())
 
@@ -420,7 +443,13 @@ class EndpointManager:
         return result
 
     def _get_class_from_module(self, module: Any, class_suffix: str) -> type | None:
-        """Extract a class from module by suffix pattern."""
+        """Extract a class from module by suffix pattern.
+
+        Prefers classes defined in the module itself (obj.__module__ == module.__name__)
+        over imported classes. This ensures derived classes are found even when
+        they import their parent class.
+        """
+        candidates: list[type] = []
         for attr_name in dir(module):
             if attr_name.startswith("_"):
                 continue
@@ -432,8 +461,18 @@ class EndpointManager:
                     continue
                 if not hasattr(obj, "name"):
                     continue
-                return obj
-        return None
+                candidates.append(obj)
+
+        if not candidates:
+            return None
+
+        # Prefer class defined in this module over imported classes
+        for cls in candidates:
+            if cls.__module__ == module.__name__:
+                return cls
+
+        # Fallback to first candidate
+        return candidates[0]
 
     def _get_ee_mixin_from_module(self, module: Any, class_suffix: str) -> type | None:
         """Extract an EE mixin class from module."""
