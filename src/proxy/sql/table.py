@@ -11,6 +11,7 @@ from genro_toolbox import get_uuid
 from .column import Columns
 
 if TYPE_CHECKING:
+    from .query import Query
     from .sqldb import SqlDb
 
 
@@ -223,10 +224,12 @@ class Table:
         for col in self.columns.values():
             if col.name == self.pkey:
                 continue  # Skip primary key, it's created with the table
+            # Use IF NOT EXISTS to avoid transaction abort in PostgreSQL
+            sql = f"ALTER TABLE {self.name} ADD COLUMN IF NOT EXISTS {col.to_sql()}"
             try:
-                await self.db.adapter.execute(f"ALTER TABLE {self.name} ADD COLUMN {col.to_sql()}")
+                await self.db.adapter.execute(sql)
             except Exception:
-                pass  # Column already exists
+                pass  # SQLite < 3.35 doesn't support IF NOT EXISTS for ADD COLUMN
 
     # -------------------------------------------------------------------------
     # JSON Encoding/Decoding
@@ -311,12 +314,20 @@ class Table:
     # CRUD Operations
     # -------------------------------------------------------------------------
 
-    async def insert(self, data: dict[str, Any]) -> int:
-        """Insert a row. Calls trigger_on_inserting before and trigger_on_inserted after.
+    async def insert(self, data: dict[str, Any], raw: bool = False) -> int:
+        """Insert a row.
+
+        Args:
+            data: Record data to insert.
+            raw: If True, bypass triggers and encoding/encryption.
 
         The data dict is mutated: if the pk is auto-generated (UUID or autoincrement),
         it will be populated in data after insert.
         """
+        if raw:
+            await self.db.adapter.insert(self.name, data)
+            return 1
+
         record = await self.trigger_on_inserting(data)
         encoded = self._encrypt_fields(self._encode_json_fields(record))
 
@@ -343,19 +354,47 @@ class Table:
         where: dict[str, Any] | None = None,
         order_by: str | None = None,
         limit: int | None = None,
+        raw: bool = False,
     ) -> list[dict[str, Any]]:
-        """Select rows."""
+        """Select rows.
+
+        Args:
+            columns: Columns to select (None = all).
+            where: WHERE conditions.
+            order_by: ORDER BY clause.
+            limit: LIMIT clause.
+            raw: If True, skip JSON decoding and decryption.
+
+        Returns:
+            List of row dicts.
+        """
         rows = await self.db.adapter.select(self.name, columns, where, order_by, limit)
+        if raw:
+            return rows
         return [self._decrypt_fields(self._decode_json_fields(row)) for row in rows]
 
     async def select_one(
         self,
         columns: list[str] | None = None,
         where: dict[str, Any] | None = None,
+        raw: bool = False,
     ) -> dict[str, Any] | None:
-        """Select single row."""
+        """Select single row.
+
+        Args:
+            columns: Columns to select (None = all).
+            where: WHERE conditions.
+            raw: If True, skip JSON decoding and decryption.
+
+        Returns:
+            Row dict or None.
+        """
         row = await self.db.adapter.select_one(self.name, columns, where)
-        return self._decrypt_fields(self._decode_json_fields(row)) if row else None
+        if row is None:
+            return None
+        if raw:
+            return row
+        return self._decrypt_fields(self._decode_json_fields(row))
 
     async def select_for_update(
         self,
@@ -421,11 +460,22 @@ class Table:
 
         return RecordUpdater(self, self.pkey, pkey_value, insert_missing, for_update)
 
-    async def update(self, values: dict[str, Any], where: dict[str, Any]) -> int:
-        """Update rows. Calls trigger_on_updating before and trigger_on_updated after.
+    async def update(
+        self, values: dict[str, Any], where: dict[str, Any], raw: bool = False
+    ) -> int:
+        """Update rows.
 
-        Uses SELECT FOR UPDATE to lock the row during update (PostgreSQL).
+        Args:
+            values: Column-value pairs to update.
+            where: WHERE conditions.
+            raw: If True, bypass triggers, encoding, and encryption.
+
+        Returns:
+            Number of affected rows.
         """
+        if raw:
+            return await self.db.adapter.update(self.name, values, where)
+
         old_record = await self.select_for_update(where)
         record = await self.trigger_on_updating(values, old_record or {})
         encoded = self._encrypt_fields(self._encode_json_fields(record))
@@ -434,19 +484,30 @@ class Table:
             await self.trigger_on_updated(record, old_record)
         return result
 
-    async def update_batch(
+    async def batch_update(
         self,
         pkeys: list[Any],
         updater: dict[str, Any] | None = None,
+        raw: bool = False,
     ) -> int:
-        """Update multiple records by primary key, calling triggers for each.
+        """Update multiple records by primary key.
 
-        Performs ONE read (SELECT all records) then N writes (UPDATE per record)
-        with trigger_on_updating/trigger_on_updated called for each.
+        Two modes based on raw parameter:
+        - raw=False (default): 1 SELECT + N UPDATE with triggers for each record.
+          The updater can be a dict or callable.
+        - raw=True: Single UPDATE...WHERE IN, no triggers, no encoding/encryption.
+          The updater must be a dict.
+
+        When updater is a callable (raw=False only):
+        - Receives the mutable record dict
+        - Can modify multiple fields in place
+        - Return False to skip this record's update
+        - Return True/None to proceed with update
 
         Args:
             pkeys: List of primary key values to update.
-            updater: Dict of field:value to set on each record.
+            updater: Dict of field:value, or callable(record) -> bool|None.
+            raw: If True, bypass triggers/encoding/encryption (single SQL).
 
         Returns:
             Number of records updated.
@@ -458,18 +519,36 @@ class Table:
         if pkey is None:
             raise ValueError(f"Table {self.name} has no primary key defined")
 
-        # Single SELECT to fetch all records
         adapter = self.db.adapter
-        params: dict[str, Any] = {}
+
+        # Raw mode: single UPDATE statement, no triggers
+        if raw:
+            if updater is None or callable(updater):
+                raise ValueError("raw=True requires updater to be a dict")
+
+            set_parts = [f"{k} = {adapter._placeholder(k)}" for k in updater]
+            set_clause = ", ".join(set_parts)
+
+            params: dict[str, Any] = dict(updater)
+            params.update({f"pk_{i}": pk for i, pk in enumerate(pkeys)})
+            placeholders = ", ".join(
+                f"{adapter._placeholder(f'pk_{i}')}" for i in range(len(pkeys))
+            )
+
+            query = f"UPDATE {self.name} SET {set_clause} WHERE {pkey} IN ({placeholders})"
+            return await adapter.execute(query, params)
+
+        # Normal mode: SELECT + N updates with triggers
+        params = {}
         params.update({f"pk_{i}": pk for i, pk in enumerate(pkeys)})
-        placeholders = ", ".join(f"{adapter._placeholder(f'pk_{i}')}" for i in range(len(pkeys)))
+        placeholders = ", ".join(
+            f"{adapter._placeholder(f'pk_{i}')}" for i in range(len(pkeys))
+        )
         query = f"SELECT * FROM {self.name} WHERE {pkey} IN ({placeholders})"
         rows = await adapter.fetch_all(query, params)
 
-        # Index by pk for fast lookup
         records_by_pk = {row[pkey]: dict(row) for row in rows}
 
-        # N writes with triggers
         updated = 0
         for pk_value in pkeys:
             old_record = records_by_pk.get(pk_value)
@@ -477,12 +556,19 @@ class Table:
                 continue
 
             new_record = dict(old_record)
-            if updater:
-                new_record.update(updater)
 
-            # Call triggers and update
+            # Apply updater
+            if updater is not None:
+                if callable(updater):
+                    result = updater(new_record)
+                    if result is False:
+                        continue  # Skip this record
+                else:
+                    new_record.update(updater)
+
+            # Triggers and encoding
             new_record = await self.trigger_on_updating(new_record, old_record)
-            encoded = self._encode_json_fields(new_record)
+            encoded = self._encrypt_fields(self._encode_json_fields(new_record))
             result = await adapter.update(self.name, encoded, {pkey: pk_value})
             if result > 0:
                 await self.trigger_on_updated(new_record, old_record)
@@ -490,47 +576,19 @@ class Table:
 
         return updated
 
-    async def update_batch_raw(
-        self,
-        pkeys: list[Any],
-        updater: dict[str, Any],
-    ) -> int:
-        """Update multiple records with a single UPDATE statement. No triggers.
-
-        Use when you know there are no triggers to call and want maximum efficiency.
-        Performs a single UPDATE ... WHERE pk IN (...) query.
+    async def delete(self, where: dict[str, Any], raw: bool = False) -> int:
+        """Delete rows.
 
         Args:
-            pkeys: List of primary key values to update.
-            updater: Dict of field:value to set on all records.
+            where: WHERE conditions.
+            raw: If True, bypass triggers.
 
         Returns:
-            Number of records updated.
+            Number of deleted rows.
         """
-        if not pkeys or not updater:
-            return 0
+        if raw:
+            return await self.db.adapter.delete(self.name, where)
 
-        pkey = self.pkey
-        if pkey is None:
-            raise ValueError(f"Table {self.name} has no primary key defined")
-
-        adapter = self.db.adapter
-
-        # Build SET clause
-        set_parts = [f"{k} = {adapter._placeholder(k)}" for k in updater]
-        set_clause = ", ".join(set_parts)
-
-        # Build IN clause
-        params: dict[str, Any] = dict(updater)
-        params.update({f"pk_{i}": pk for i, pk in enumerate(pkeys)})
-        placeholders = ", ".join(f"{adapter._placeholder(f'pk_{i}')}" for i in range(len(pkeys)))
-
-        query = f"UPDATE {self.name} SET {set_clause} WHERE {pkey} IN ({placeholders})"
-        return await adapter.execute(query, params)
-
-    async def delete(self, where: dict[str, Any]) -> int:
-        """Delete rows. Calls trigger_on_deleting before and trigger_on_deleted after."""
-        # Fetch record for triggers before deletion
         record = await self.select_one(where=where)
         if record:
             await self.trigger_on_deleting(record)
@@ -548,22 +606,102 @@ class Table:
         return await self.db.adapter.count(self.name, where)
 
     # -------------------------------------------------------------------------
+    # Query Builder (fluent API)
+    # -------------------------------------------------------------------------
+
+    def query(
+        self,
+        columns: list[str] | None = None,
+        where: dict[str, Any] | str | None = None,
+        where_kwargs: dict[str, Any] | None = None,
+        order_by: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        for_update: bool = False,
+        **kwargs: Any,
+    ) -> "Query":
+        """Return a Query object for fluent API.
+
+        Similar to the old Genropy ORM's query() method.
+
+        Args:
+            columns: Columns to select (None = all).
+            where: WHERE - dict per AND+uguaglianze, stringa per espressione.
+            where_kwargs: Named conditions (from @extract_kwargs(where=True)).
+            order_by: ORDER BY clause.
+            limit: LIMIT clause.
+            offset: OFFSET clause.
+            for_update: If True, use SELECT FOR UPDATE.
+            **kwargs: Parametri per :param references.
+
+        Returns:
+            Query object with fetch(), fetch_one(), count(), exists() methods.
+
+        Examples:
+            # Simple (dict = AND with equality)
+            rows = await table.query(where={'active': True}).fetch()
+            row = await table.query(where={'id': pk}).fetch_one()
+
+            # Advanced with dict conditions
+            rows = await table.query(
+                where_a={'column': 'status', 'op': '!=', 'value': 'deleted'},
+                where_b={'column': 'name', 'op': 'ILIKE', 'value': ':search'},
+                where="$a AND $b",
+                search='%test%'
+            ).fetch()
+
+            # Advanced with flat kwargs (via @extract_kwargs(where=True))
+            rows = await table.query(
+                where_a_column='status', where_a_op='!=', where_a_value='deleted',
+                where_b_column='name', where_b_op='ILIKE', where_b_value=':search',
+                where="$a AND $b",
+                search='%test%'
+            ).fetch()
+        """
+        from .query import Query
+
+        # Parse where_* kwargs manually if where_kwargs not provided
+        if where_kwargs is None:
+            where_kwargs = {}
+            remaining_kwargs = {}
+            for k, v in kwargs.items():
+                if k.startswith('where_'):
+                    where_kwargs[k[6:]] = v  # Remove 'where_' prefix
+                else:
+                    remaining_kwargs[k] = v
+            kwargs = remaining_kwargs
+
+        return Query(
+            table=self,
+            columns=columns,
+            where=where,
+            where_kwargs=where_kwargs,
+            order_by=order_by,
+            limit=limit,
+            offset=offset,
+            for_update=for_update,
+            **kwargs,
+        )
+
+    # -------------------------------------------------------------------------
     # Raw Query
     # -------------------------------------------------------------------------
 
     async def fetch_one(
         self, query: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
-        """Execute raw query, return single row."""
+        """Execute query, return single row with JSON decode and decryption."""
         row = await self.db.adapter.fetch_one(query, params)
-        return self._decode_json_fields(row) if row else None
+        if row is None:
+            return None
+        return self._decrypt_fields(self._decode_json_fields(row))
 
     async def fetch_all(
         self, query: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
-        """Execute raw query, return all rows."""
+        """Execute query, return all rows with JSON decode and decryption."""
         rows = await self.db.adapter.fetch_all(query, params)
-        return self._decode_rows(rows)
+        return [self._decrypt_fields(self._decode_json_fields(row)) for row in rows]
 
     async def execute(self, query: str, params: dict[str, Any] | None = None) -> int:
         """Execute raw query, return affected row count."""
