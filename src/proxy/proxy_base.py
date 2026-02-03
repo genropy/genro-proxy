@@ -143,22 +143,19 @@ class ProxyBase:
         return self.encryption.key
 
     async def init(self) -> None:
-        """Initialize database: connect, create tables, then commit and release.
+        """Initialize database: create tables within a transaction.
 
         This uses a single transaction to set up schema. The connection is
-        released after initialization, ready for per-request transactions.
+        committed and released after initialization, ready for per-request use.
         """
-        await self.db.connect()
-        await self.db.check_structure()
+        async with self.db.connection():
+            await self.db.check_structure()
 
-        # Sync schema for base tables
-        for table_name in self.db.tables:
-            table = self.db.table(table_name)
-            if hasattr(table, "sync_schema"):
-                await table.sync_schema()
-
-        # COMMIT schema changes and release connection
-        await self.db.close()
+            # Sync schema for base tables
+            for table_name in self.db.tables:
+                table = self.db.table(table_name)
+                if hasattr(table, "sync_schema"):
+                    await table.sync_schema()
 
     async def shutdown(self) -> None:
         """Shutdown application: close database pool/connection."""
