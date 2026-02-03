@@ -155,7 +155,8 @@ class SqlDb:
         """Auto-discover and register Table classes from entity packages.
 
         Scans each package for sub-packages containing table.py modules,
-        then registers any Table subclass found.
+        then registers any Table subclass found. When multiple classes have
+        the same table name, the most derived class (per MRO) is used.
 
         Args:
             *packages: Package paths (e.g., "genro_proxy.entities", "myproxy.entities")
@@ -169,12 +170,30 @@ class SqlDb:
 
             db.discover("genro_proxy.entities", "myproxy.entities")
             # Registers tables from both packages
+            # If myproxy extends TenantsTable, the derived version is used
         """
-        registered: list[Table] = []
+        # Phase 1: Collect all table classes from all packages
+        all_classes: list[type[Table]] = []
         for package_path in packages:
-            for table_class in self._find_table_classes(package_path):
-                if table_class.name not in self.tables:
-                    registered.append(self.add_table(table_class))
+            all_classes.extend(self._find_table_classes(package_path))
+
+        # Phase 2: For each table name, keep only the most derived class
+        by_name: dict[str, type[Table]] = {}
+        for table_class in all_classes:
+            name = table_class.name
+            existing = by_name.get(name)
+            if existing is None:
+                by_name[name] = table_class
+            elif issubclass(table_class, existing):
+                # New class is more derived, replace
+                by_name[name] = table_class
+            # else: existing is same or more derived, keep it
+
+        # Phase 3: Register the winning classes
+        registered: list[Table] = []
+        for table_class in by_name.values():
+            if table_class.name not in self.tables:
+                registered.append(self.add_table(table_class))
         return registered
 
     def table(self, name: str) -> Table:
