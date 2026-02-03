@@ -68,7 +68,7 @@ cloud = ["genro-proxy[s3,gcs,azure]"]
 all = ["genro-proxy[dev,postgresql,cloud]"]
 
 [project.scripts]
-gproxy = "proxy.cli:main"
+gproxy = "proxy.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/genropy/genro-proxy"
