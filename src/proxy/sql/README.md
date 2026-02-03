@@ -245,6 +245,58 @@ where="($a AND $b) OR (NOT $c AND $d)"
 | `fetch_one()` | `dict` or `None` | First matching row |
 | `count()` | `int` | Count of matching rows |
 | `exists()` | `bool` | True if any row matches |
+| `delete(raw=False)` | `int` | Delete matching rows, return count |
+| `update(values, raw=False)` | `int` | Update matching rows, return count |
+
+### Delete and Update
+
+The query object can be reused for preview and then mutation:
+
+```python
+# Preview what will be deleted
+q = table.query(where={'status': 'deleted'})
+records = await q.fetch()
+print(f"Will delete {len(records)} records")
+
+# Then delete
+deleted = await q.delete()
+
+# Or with complex conditions
+deleted = await table.query(
+    where_old={'column': 'created_at', 'op': '<', 'value': ':threshold'},
+    where_inactive={'column': 'active', 'op': '=', 'value': 0},
+    where="$old AND $inactive",
+    threshold='2024-01-01'
+).delete()
+```
+
+Update works the same way:
+
+```python
+# Preview what will be updated
+q = table.query(where={'status': 'pending'})
+records = await q.fetch()
+
+# Then update
+updated = await q.update({'status': 'processed', 'processed_at': now})
+
+# With complex conditions
+updated = await table.query(
+    where_inactive={'column': 'last_login', 'op': '<', 'value': ':date'},
+    where="$inactive",
+    date='2023-01-01'
+).update({'status': 'archived'})
+```
+
+The `raw=True` parameter bypasses triggers and encoding/encryption for bulk operations:
+
+```python
+# Fast bulk delete without triggers
+deleted = await table.query(where={'temp': True}).delete(raw=True)
+
+# Fast bulk update without triggers
+updated = await table.query(where={'batch_id': 123}).update({'processed': True}, raw=True)
+```
 
 ## Adapters
 

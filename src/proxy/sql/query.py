@@ -318,5 +318,170 @@ class Query:
         row = await self.table.db.adapter.fetch_one(sql, params)
         return row['cnt'] if row else 0
 
+    async def delete(self, raw: bool = False) -> int:
+        """Delete matching rows.
+
+        Args:
+            raw: If True, bypass triggers.
+
+        Returns:
+            Number of deleted rows.
+
+        Example:
+            # Delete with simple condition
+            deleted = await table.query(where={'status': 'deleted'}).delete()
+
+            # Delete with complex condition
+            deleted = await table.query(
+                where_old={'column': 'created_at', 'op': '<', 'value': ':threshold'},
+                where="$old",
+                threshold='2024-01-01'
+            ).delete()
+
+            # Preview then delete (reusable query)
+            q = table.query(where={'status': 'archived'})
+            records = await q.fetch()  # See what will be deleted
+            deleted = await q.delete()  # Then delete
+        """
+        where_sql, params = self._build_where()
+
+        if raw:
+            return await self._execute_delete_raw(where_sql, params)
+
+        return await self._execute_delete_with_triggers(where_sql, params)
+
+    async def _execute_delete_raw(self, where_sql: str, params: dict[str, Any]) -> int:
+        """Execute DELETE without triggers."""
+        sql = f"DELETE FROM {self.table.name}"
+        if where_sql:
+            sql += f" WHERE {where_sql}"
+
+        return await self.table.db.adapter.execute(sql, params)
+
+    async def _execute_delete_with_triggers(
+        self, where_sql: str, params: dict[str, Any]
+    ) -> int:
+        """Execute DELETE with triggers for each row."""
+        # First fetch rows to get records for triggers
+        rows = await self._execute_select(where_sql, params)
+        if not rows:
+            return 0
+
+        deleted = 0
+        for record in rows:
+            await self.table.trigger_on_deleting(record)
+
+            # Delete this specific row by primary key
+            if self.table.pkey:
+                pk_value = record.get(self.table.pkey)
+                if pk_value is not None:
+                    result = await self.table.db.adapter.delete(
+                        self.table.name, {self.table.pkey: pk_value}
+                    )
+                    if result > 0:
+                        await self.table.trigger_on_deleted(record)
+                        deleted += 1
+            else:
+                # No primary key - delete by all columns (risky, but fallback)
+                result = await self.table.db.adapter.delete(self.table.name, record)
+                if result > 0:
+                    await self.table.trigger_on_deleted(record)
+                    deleted += 1
+
+        return deleted
+
+    async def update(self, values: dict[str, Any], raw: bool = False) -> int:
+        """Update matching rows.
+
+        Args:
+            values: Column-value pairs to update.
+            raw: If True, bypass triggers and encoding/encryption.
+
+        Returns:
+            Number of updated rows.
+
+        Example:
+            # Update with simple condition
+            updated = await table.query(where={'status': 'pending'}).update({'status': 'processed'})
+
+            # Update with complex condition
+            updated = await table.query(
+                where_inactive={'column': 'last_login', 'op': '<', 'value': ':date'},
+                where="$inactive",
+                date='2023-01-01'
+            ).update({'status': 'archived'})
+
+            # Preview then update (reusable query)
+            q = table.query(where={'status': 'active'})
+            records = await q.fetch()  # See what will be updated
+            updated = await q.update({'verified': True})  # Then update
+        """
+        where_sql, params = self._build_where()
+
+        if raw:
+            return await self._execute_update_raw(where_sql, params, values)
+
+        return await self._execute_update_with_triggers(where_sql, params, values)
+
+    async def _execute_update_raw(
+        self, where_sql: str, params: dict[str, Any], values: dict[str, Any]
+    ) -> int:
+        """Execute UPDATE without triggers or encoding."""
+        adapter = self.table.db.adapter
+
+        # Build SET clause
+        set_parts = []
+        update_params = dict(params)
+        for col, val in values.items():
+            param_name = f"upd_{col}"
+            set_parts.append(f"{col} = {adapter._placeholder(param_name)}")
+            update_params[param_name] = val
+
+        sql = f"UPDATE {self.table.name} SET {', '.join(set_parts)}"
+        if where_sql:
+            sql += f" WHERE {where_sql}"
+
+        return await adapter.execute(sql, update_params)
+
+    async def _execute_update_with_triggers(
+        self, where_sql: str, params: dict[str, Any], values: dict[str, Any]
+    ) -> int:
+        """Execute UPDATE with triggers for each row."""
+        # First fetch rows to get old records for triggers
+        rows = await self._execute_select(where_sql, params)
+        if not rows:
+            return 0
+
+        updated = 0
+        for old_record in rows:
+            # Create new record with updates
+            new_record = dict(old_record)
+            new_record.update(values)
+
+            # Trigger and encode
+            new_record = await self.table.trigger_on_updating(new_record, old_record)
+            encoded = self.table._encrypt_fields(self.table._encode_json_fields(new_record))
+
+            # Update this specific row by primary key
+            if self.table.pkey:
+                pk_value = old_record.get(self.table.pkey)
+                if pk_value is not None:
+                    result = await self.table.db.adapter.update(
+                        self.table.name, encoded, {self.table.pkey: pk_value}
+                    )
+                    if result > 0:
+                        await self.table.trigger_on_updated(new_record, old_record)
+                        updated += 1
+            else:
+                # No primary key - update by all old columns (risky, but fallback)
+                result = await self.table.db.adapter.update(
+                    self.table.name, encoded, old_record
+                )
+                if result > 0:
+                    await self.table.trigger_on_updated(new_record, old_record)
+                    updated += 1
+
+        return updated
+
 
 __all__ = ['Query', 'WhereBuilder', 'parse_where_kwargs']

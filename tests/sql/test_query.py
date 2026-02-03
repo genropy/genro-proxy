@@ -19,9 +19,10 @@ class QueryTestTable(Table):
     """Test table for query builder tests."""
 
     name = "query_test"
+    pkey = "id"
 
     def configure(self):
-        self.columns.column("id", String, unique=True)
+        self.columns.column("id", String)
         self.columns.column("name", String)
         self.columns.column("status", String, default="active")
         self.columns.column("score", Integer, default=0)
@@ -597,3 +598,211 @@ class TestQuery:
         ).fetch()
         assert len(rows) == 1
         assert rows[0]["score"] == 80
+
+
+# ---------------------------------------------------------------------------
+# Query.delete() Tests
+# ---------------------------------------------------------------------------
+
+
+class TestQueryDelete:
+    """Test Query.delete() method."""
+
+    @pytest.mark.asyncio
+    async def test_delete_simple_where(self, query_db: SqlDb):
+        """Delete with simple dict where."""
+        table = query_db.table("query_test")
+        await table.insert({"id": "1", "status": "active"})
+        await table.insert({"id": "2", "status": "deleted"})
+        await table.insert({"id": "3", "status": "deleted"})
+        await query_db.commit()
+
+        deleted = await table.query(where={"status": "deleted"}).delete()
+        assert deleted == 2
+
+        remaining = await table.query().fetch()
+        assert len(remaining) == 1
+        assert remaining[0]["status"] == "active"
+
+    @pytest.mark.asyncio
+    async def test_delete_complex_expression(self, query_db: SqlDb):
+        """Delete with complex expression."""
+        table = query_db.table("query_test")
+        await table.insert({"id": "1", "status": "active", "score": 10})
+        await table.insert({"id": "2", "status": "active", "score": 90})
+        await table.insert({"id": "3", "status": "deleted", "score": 50})
+        await query_db.commit()
+
+        # Delete active with low score
+        deleted = await table.query(
+            where_active={"column": "status", "op": "=", "value": "active"},
+            where_low={"column": "score", "op": "<", "value": 50},
+            where="$active AND $low",
+        ).delete()
+        assert deleted == 1
+
+        remaining = await table.query().fetch()
+        assert len(remaining) == 2
+        ids = {r["id"] for r in remaining}
+        assert ids == {"2", "3"}
+
+    @pytest.mark.asyncio
+    async def test_delete_raw_mode(self, query_db: SqlDb):
+        """Delete with raw=True (no triggers)."""
+        table = query_db.table("query_test")
+        await table.insert({"id": "1", "status": "old"})
+        await table.insert({"id": "2", "status": "old"})
+        await table.insert({"id": "3", "status": "new"})
+        await query_db.commit()
+
+        deleted = await table.query(where={"status": "old"}).delete(raw=True)
+        assert deleted == 2
+
+        remaining = await table.query().fetch()
+        assert len(remaining) == 1
+
+    @pytest.mark.asyncio
+    async def test_delete_no_match(self, query_db: SqlDb):
+        """Delete with no matching rows."""
+        table = query_db.table("query_test")
+        await table.insert({"id": "1", "status": "active"})
+        await query_db.commit()
+
+        deleted = await table.query(where={"status": "nonexistent"}).delete()
+        assert deleted == 0
+
+        remaining = await table.query().fetch()
+        assert len(remaining) == 1
+
+    @pytest.mark.asyncio
+    async def test_delete_preview_then_delete(self, query_db: SqlDb):
+        """Preview with fetch, then delete (reusable query)."""
+        table = query_db.table("query_test")
+        await table.insert({"id": "1", "status": "to_delete"})
+        await table.insert({"id": "2", "status": "to_delete"})
+        await table.insert({"id": "3", "status": "keep"})
+        await query_db.commit()
+
+        q = table.query(where={"status": "to_delete"})
+
+        # Preview
+        preview = await q.fetch()
+        assert len(preview) == 2
+
+        # Delete
+        deleted = await q.delete()
+        assert deleted == 2
+
+        remaining = await table.query().fetch()
+        assert len(remaining) == 1
+
+
+# ---------------------------------------------------------------------------
+# Query.update() Tests
+# ---------------------------------------------------------------------------
+
+
+class TestQueryUpdate:
+    """Test Query.update() method."""
+
+    @pytest.mark.asyncio
+    async def test_update_simple_where(self, query_db: SqlDb):
+        """Update with simple dict where."""
+        table = query_db.table("query_test")
+        await table.insert({"id": "1", "status": "pending"})
+        await table.insert({"id": "2", "status": "pending"})
+        await table.insert({"id": "3", "status": "done"})
+        await query_db.commit()
+
+        updated = await table.query(where={"status": "pending"}).update({"status": "processed"})
+        assert updated == 2
+
+        processed = await table.query(where={"status": "processed"}).fetch()
+        assert len(processed) == 2
+
+    @pytest.mark.asyncio
+    async def test_update_complex_expression(self, query_db: SqlDb):
+        """Update with complex expression."""
+        table = query_db.table("query_test")
+        await table.insert({"id": "1", "status": "active", "score": 10})
+        await table.insert({"id": "2", "status": "active", "score": 90})
+        await table.insert({"id": "3", "status": "inactive", "score": 50})
+        await query_db.commit()
+
+        # Update active with high score
+        updated = await table.query(
+            where_active={"column": "status", "op": "=", "value": "active"},
+            where_high={"column": "score", "op": ">=", "value": 50},
+            where="$active AND $high",
+        ).update({"status": "premium"})
+        assert updated == 1
+
+        premium = await table.query(where={"status": "premium"}).fetch()
+        assert len(premium) == 1
+        assert premium[0]["id"] == "2"
+
+    @pytest.mark.asyncio
+    async def test_update_raw_mode(self, query_db: SqlDb):
+        """Update with raw=True (no triggers, no encoding)."""
+        table = query_db.table("query_test")
+        await table.insert({"id": "1", "status": "old"})
+        await table.insert({"id": "2", "status": "old"})
+        await query_db.commit()
+
+        updated = await table.query(where={"status": "old"}).update({"status": "new"}, raw=True)
+        assert updated == 2
+
+        new_rows = await table.query(where={"status": "new"}).fetch()
+        assert len(new_rows) == 2
+
+    @pytest.mark.asyncio
+    async def test_update_no_match(self, query_db: SqlDb):
+        """Update with no matching rows."""
+        table = query_db.table("query_test")
+        await table.insert({"id": "1", "status": "active"})
+        await query_db.commit()
+
+        updated = await table.query(where={"status": "nonexistent"}).update({"score": 999})
+        assert updated == 0
+
+    @pytest.mark.asyncio
+    async def test_update_multiple_fields(self, query_db: SqlDb):
+        """Update multiple fields at once."""
+        table = query_db.table("query_test")
+        await table.insert({"id": "1", "name": "Old Name", "status": "pending", "score": 0})
+        await query_db.commit()
+
+        updated = await table.query(where={"id": "1"}).update({
+            "name": "New Name",
+            "status": "active",
+            "score": 100,
+        })
+        assert updated == 1
+
+        row = await table.query(where={"id": "1"}).fetch_one()
+        assert row is not None
+        assert row["name"] == "New Name"
+        assert row["status"] == "active"
+        assert row["score"] == 100
+
+    @pytest.mark.asyncio
+    async def test_update_preview_then_update(self, query_db: SqlDb):
+        """Preview with fetch, then update (reusable query)."""
+        table = query_db.table("query_test")
+        await table.insert({"id": "1", "status": "to_update", "score": 10})
+        await table.insert({"id": "2", "status": "to_update", "score": 20})
+        await table.insert({"id": "3", "status": "keep", "score": 30})
+        await query_db.commit()
+
+        q = table.query(where={"status": "to_update"})
+
+        # Preview
+        preview = await q.fetch()
+        assert len(preview) == 2
+
+        # Update
+        updated = await q.update({"status": "updated"})
+        assert updated == 2
+
+        updated_rows = await table.query(where={"status": "updated"}).fetch()
+        assert len(updated_rows) == 2
