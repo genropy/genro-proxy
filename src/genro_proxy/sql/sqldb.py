@@ -189,11 +189,19 @@ class SqlDb:
                 by_name[name] = table_class
             # else: existing is same or more derived, keep it
 
-        # Phase 3: Register the winning classes
+        # Phase 3: Register or replace with more derived classes
         registered: list[Table] = []
         for table_class in by_name.values():
-            if table_class.name not in self.tables:
+            name = table_class.name
+            existing = self.tables.get(name)
+            if existing is None:
+                # New table
                 registered.append(self.add_table(table_class))
+            elif table_class is not type(existing) and issubclass(table_class, type(existing)):
+                # New class is strictly more derived, replace existing
+                self.tables[name] = table_class(self)
+                registered.append(self.tables[name])
+            # else: existing is same or more derived, keep it
         return registered
 
     def table(self, name: str) -> Table:

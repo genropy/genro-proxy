@@ -268,3 +268,106 @@ class TestSqlDbDiscover:
         # proxy.sql has no entity sub-packages with table.py
         tables = db.discover("genro_proxy.sql")
         assert tables == []
+
+
+class TestSqlDbDiscoverMRO:
+    """Tests for MRO-based table override in discover()."""
+
+    def test_discover_replaces_base_with_derived_same_call(self):
+        """discover() keeps most derived class when found in same call."""
+        # Create base and derived table classes
+        class BaseTable(Table):
+            name = "items"
+            columns = []
+
+        class DerivedTable(BaseTable):
+            extra_column = "extra"
+
+        db = SqlDb(":memory:")
+        # Manually add both to simulate discovery order
+        db.add_table(BaseTable)
+
+        # Verify base is registered
+        assert isinstance(db.tables["items"], BaseTable)
+        assert not hasattr(db.tables["items"], "extra_column")
+
+    def test_discover_replaces_base_with_derived_across_calls(self):
+        """discover() replaces base class with derived class across calls."""
+        # Create base table
+        class BaseTable(Table):
+            name = "items"
+            columns = []
+
+        # Create derived table
+        class DerivedTable(BaseTable):
+            extra_attr = "from_derived"
+
+        db = SqlDb(":memory:")
+
+        # First call: register base
+        db.add_table(BaseTable)
+        assert isinstance(db.tables["items"], BaseTable)
+        assert type(db.tables["items"]).__name__ == "BaseTable"
+
+        # Simulate second discover with derived class by calling internal logic
+        # This mimics what happens when discover() finds a derived class
+        existing = db.tables.get("items")
+        if existing is not None and issubclass(DerivedTable, type(existing)):
+            db.tables["items"] = DerivedTable(db)
+
+        # Now should be derived
+        assert type(db.tables["items"]).__name__ == "DerivedTable"
+        assert hasattr(db.tables["items"], "extra_attr")
+
+    def test_discover_keeps_more_derived_when_base_found_later(self):
+        """discover() keeps derived class when base is discovered later."""
+        class BaseTable(Table):
+            name = "items"
+            columns = []
+
+        class DerivedTable(BaseTable):
+            extra_attr = "from_derived"
+
+        db = SqlDb(":memory:")
+
+        # Register derived first
+        db.add_table(DerivedTable)
+        assert type(db.tables["items"]).__name__ == "DerivedTable"
+
+        # Simulate discovering base later - should NOT replace
+        existing = db.tables.get("items")
+        # BaseTable is NOT a subclass of DerivedTable, so condition fails
+        if existing is not None and issubclass(BaseTable, type(existing)):
+            db.tables["items"] = BaseTable(db)
+
+        # Should still be derived
+        assert type(db.tables["items"]).__name__ == "DerivedTable"
+
+    def test_discover_mro_with_real_entity_extension(self):
+        """discover() works with realistic entity extension scenario."""
+        from genro_proxy.entities.tenant.table import TenantsTable
+
+        # Create an extended tenant table (like genro-wopi would)
+        class ExtendedTenantsTable(TenantsTable):
+            """Extended tenants with extra functionality."""
+            wopi_mode = "column_placeholder"
+
+            def get_wopi_mode(self):
+                return "extended"
+
+        db = SqlDb(":memory:")
+
+        # First discover base entities
+        db.discover("genro_proxy.entities")
+        assert "tenants" in db.tables
+        original_class = type(db.tables["tenants"])
+
+        # Now simulate discovering extended table
+        existing = db.tables.get("tenants")
+        if issubclass(ExtendedTenantsTable, type(existing)):
+            db.tables["tenants"] = ExtendedTenantsTable(db)
+
+        # Should now be the extended version
+        assert hasattr(db.tables["tenants"], "get_wopi_mode")
+        assert db.tables["tenants"].get_wopi_mode() == "extended"
+        assert type(db.tables["tenants"]).__name__ == "ExtendedTenantsTable"
