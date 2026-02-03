@@ -62,7 +62,7 @@ The foundation of the multi-channel pattern.
 Marks methods as HTTP POST (default is GET):
 
 ```python
-from proxy.interface import BaseEndpoint, POST
+from genro_proxy.interface import BaseEndpoint, POST
 
 class ItemEndpoint(BaseEndpoint):
     name = "items"
@@ -132,7 +132,7 @@ Registers all endpoint methods as FastAPI routes:
 
 ```python
 from fastapi import APIRouter
-from proxy.interface import register_api_endpoint
+from genro_proxy.interface import register_api_endpoint
 
 router = APIRouter(prefix="/api")
 register_api_endpoint(router, items_endpoint)
@@ -174,7 +174,7 @@ Generates Click commands from endpoint introspection:
 
 ```python
 import click
-from proxy.interface import register_endpoint, CliContext
+from genro_proxy.interface import register_endpoint, CliContext
 
 @click.group()
 def cli():
@@ -245,7 +245,7 @@ Configurable context manager - always use as instance, not module-level function
 
 ```python
 from pathlib import Path
-from proxy.interface import CliContext
+from genro_proxy.interface import CliContext
 
 # Custom configuration for a specific proxy
 ctx = CliContext(
@@ -279,7 +279,7 @@ Prevents access to sensitive methods in interactive REPL sessions.
 Marks methods as not accessible from REPL:
 
 ```python
-from proxy.interface import reserved
+from genro_proxy.interface import reserved
 
 class MyService:
     @reserved
@@ -295,7 +295,7 @@ class MyService:
 Wraps objects to block reserved methods:
 
 ```python
-from proxy.interface import repl_wrap
+from genro_proxy.interface import repl_wrap
 
 # In REPL setup
 service = MyService()
@@ -317,7 +317,7 @@ The wrapper also filters `dir()` output to hide reserved methods.
 ### Defining a Custom Endpoint
 
 ```python
-from proxy.interface import BaseEndpoint, POST
+from genro_proxy.interface import BaseEndpoint, POST
 
 class AccountEndpoint(BaseEndpoint):
     name = "accounts"
@@ -367,7 +367,7 @@ result = await endpoint.invoke("list", {"active": "true"})  # string → bool
 ```python
 from fastapi import APIRouter
 import click
-from proxy.interface import register_api_endpoint, register_endpoint, CliContext
+from genro_proxy.interface import register_api_endpoint, register_endpoint, CliContext
 
 # API registration
 router = APIRouter(prefix="/api")

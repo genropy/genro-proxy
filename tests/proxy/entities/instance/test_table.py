@@ -4,8 +4,8 @@
 import pytest
 import pytest_asyncio
 
-from proxy.entities.instance.table import InstanceTable
-from proxy.sql import SqlDb
+from genro_proxy.entities.instance.table import InstanceTable
+from genro_proxy.sql import SqlDb
 
 
 @pytest_asyncio.fixture

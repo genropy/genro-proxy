@@ -118,7 +118,7 @@ class ProxyBase:
     """
 
     # Override in subclass to specify entity discovery packages
-    entity_packages: list[str] = ["proxy.entities"]
+    entity_packages: list[str] = ["genro_proxy.entities"]
     ee_entity_packages: list[str] = []
     encryption_key_env: str = "PROXY_ENCRYPTION_KEY"
 

@@ -11,7 +11,7 @@ This package provides base classes for building proxy service interfaces:
 Example:
     ::
 
-        from proxy.interface import BaseEndpoint, POST, register_endpoint
+        from genro_proxy.interface import BaseEndpoint, POST, register_endpoint
 
         class ItemEndpoint(BaseEndpoint):
             name = "items"

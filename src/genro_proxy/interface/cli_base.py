@@ -11,7 +11,7 @@ Example:
     Register endpoint commands::
 
         import click
-        from proxy.interface import register_endpoint
+        from genro_proxy.interface import register_endpoint
         from myservice.entities.account import AccountEndpoint
 
         @click.group()
@@ -317,7 +317,7 @@ class CliManager:
 
     def _get_server_module(self) -> str:
         """Get the server module path for uvicorn. Override in subclass."""
-        return "proxy.server:app"
+        return "genro_proxy.server:app"
 
 
 __all__ = ["CliManager", "console", "register_endpoint"]

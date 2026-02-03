@@ -3,8 +3,8 @@
 
 import pytest_asyncio
 
-from proxy.entities.account.table import AccountsTable
-from proxy.sql import SqlDb
+from genro_proxy.entities.account.table import AccountsTable
+from genro_proxy.sql import SqlDb
 
 
 @pytest_asyncio.fixture

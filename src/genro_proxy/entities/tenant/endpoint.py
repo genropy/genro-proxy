@@ -95,7 +95,7 @@ class TenantEndpoint(BaseEndpoint):
         Raises:
             ValueError: If tenant not found.
         """
-        from proxy.sql import RecordNotFoundError
+        from genro_proxy.sql import RecordNotFoundError
 
         try:
             tenant = await self.table.record(pkey=tenant_id)

@@ -17,7 +17,7 @@ import socket
 
 import pytest
 
-from proxy.storage import StorageManager
+from genro_proxy.storage import StorageManager
 
 
 def pytest_configure(config):

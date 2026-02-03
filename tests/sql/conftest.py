@@ -24,8 +24,8 @@ from collections.abc import AsyncGenerator
 import pytest
 import pytest_asyncio
 
-from proxy.proxy_base import ProxyBase, ProxyConfigBase
-from proxy.sql import SqlDb
+from genro_proxy.proxy_base import ProxyBase, ProxyConfigBase
+from genro_proxy.sql import SqlDb
 
 # Default PostgreSQL URL for tests (can be overridden via environment)
 PG_URL = os.environ.get(

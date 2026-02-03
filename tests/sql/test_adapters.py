@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from proxy.sql.adapters import ADAPTERS, DbAdapter, SqliteAdapter, get_adapter
+from genro_proxy.sql.adapters import ADAPTERS, DbAdapter, SqliteAdapter, get_adapter
 
 
 class TestGetAdapter:

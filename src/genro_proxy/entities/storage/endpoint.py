@@ -64,7 +64,7 @@ class StorageEndpoint(BaseEndpoint):
 
     async def get(self, tenant_id: str, name: str) -> dict:
         """Get a single storage configuration."""
-        from proxy.sql import RecordNotFoundError
+        from genro_proxy.sql import RecordNotFoundError
 
         try:
             return await self.table.record(where={"tenant_id": tenant_id, "name": name})

@@ -27,7 +27,7 @@ Transaction Model:
 Example:
     Using SqlDb with transaction context manager (recommended)::
 
-        from proxy.sql import SqlDb, Table, String, Integer
+        from genro_proxy.sql import SqlDb, Table, String, Integer
 
         class UsersTable(Table):
             name = "users"

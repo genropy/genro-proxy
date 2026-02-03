@@ -12,7 +12,7 @@ Components:
 Example:
     Define an endpoint::
 
-        from proxy.interface.endpoint_base import BaseEndpoint, POST
+        from genro_proxy.interface.endpoint_base import BaseEndpoint, POST
 
         class MyEndpoint(BaseEndpoint):
             name = "items"
@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING, Any, get_origin, get_type_hints
 from pydantic import create_model
 
 if TYPE_CHECKING:
-    from proxy.proxy_base import ProxyBase
+    from genro_proxy.proxy_base import ProxyBase
 
 
 def POST(method: Callable) -> Callable:
@@ -131,7 +131,7 @@ class BaseEndpoint:
         Raises:
             ValueError: If record not found.
         """
-        from proxy.sql import RecordNotFoundError
+        from genro_proxy.sql import RecordNotFoundError
 
         try:
             return await self.table.record(pkey=id)

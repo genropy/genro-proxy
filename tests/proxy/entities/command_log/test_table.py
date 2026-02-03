@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from proxy.entities.command_log.table import CommandLogTable
+from genro_proxy.entities.command_log.table import CommandLogTable
 
 
 @pytest.mark.postgres

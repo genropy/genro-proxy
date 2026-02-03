@@ -3,7 +3,7 @@
 
 import pytest
 
-from proxy.storage import StorageManager, StorageNode
+from genro_proxy.storage import StorageManager, StorageNode
 
 
 class TestStorageNodeProperties:

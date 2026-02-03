@@ -28,7 +28,7 @@ Connection Model:
 Example:
     Usage via SqlDb (recommended)::
 
-        from proxy.sql import SqlDb
+        from genro_proxy.sql import SqlDb
 
         db = SqlDb("/data/app.db")  # or "postgresql://..."
         async with db.connection():

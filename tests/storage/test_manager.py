@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from proxy.storage import StorageManager
+from genro_proxy.storage import StorageManager
 
 
 class TestStorageManagerConfiguration:

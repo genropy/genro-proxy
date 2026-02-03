@@ -63,7 +63,7 @@ shutdown() → Closes pool/file (application shutdown only)
 ### SqlDb with Context Manager (Recommended)
 
 ```python
-from proxy.sql import SqlDb, Table, String, Integer
+from genro_proxy.sql import SqlDb, Table, String, Integer
 
 class UsersTable(Table):
     name = "users"
@@ -94,7 +94,7 @@ await db.shutdown()
 ### Adapter Direct Usage
 
 ```python
-from proxy.sql.adapters import get_adapter
+from genro_proxy.sql.adapters import get_adapter
 
 adapter = get_adapter("postgresql://user:pass@localhost/db")
 await adapter.connect()
@@ -121,7 +121,7 @@ await table.update({"active": 0}, where={"id": "u1"})
 await table.delete(where={"id": "u1"})
 
 # Get single record (raises RecordNotFoundError if not found)
-from proxy.sql import RecordNotFoundError
+from genro_proxy.sql import RecordNotFoundError
 try:
     user = await table.record(pkey="u1")
 except RecordNotFoundError:
@@ -348,7 +348,7 @@ adapter = get_adapter("postgresql://user:pass@localhost:5432/mydb")
 ## Table Definition
 
 ```python
-from proxy.sql import Table, String, Integer, Timestamp
+from genro_proxy.sql import Table, String, Integer, Timestamp
 
 class MyTable(Table):
     name = "my_table"           # Table name in database

@@ -10,7 +10,7 @@ Domain-specific proxies should subclass and add their own parameters.
 Example:
     Register endpoint with the API router::
 
-        from proxy.entities.account import AccountEndpoint
+        from genro_proxy.entities.account import AccountEndpoint
 
         endpoint = AccountEndpoint(proxy.db.table("accounts"))
         # Routes auto-generated: POST /accounts, GET /accounts/{id}, etc.
@@ -101,7 +101,7 @@ class AccountEndpoint(BaseEndpoint):
         Raises:
             ValueError: If account not found.
         """
-        from proxy.sql import RecordNotFoundError
+        from genro_proxy.sql import RecordNotFoundError
 
         try:
             return await self.table.record(where={"tenant_id": tenant_id, "id": account_id})

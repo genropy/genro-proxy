@@ -3,7 +3,7 @@
 
 import pytest
 
-from proxy.proxy_base import ProxyConfigBase, config_from_env
+from genro_proxy.proxy_base import ProxyConfigBase, config_from_env
 
 
 class TestProxyConfigBase:

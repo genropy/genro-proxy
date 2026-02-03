@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from proxy.sql.column import Columns
-from proxy.sql.table import RecordUpdater, Table
+from genro_proxy.sql.column import Columns
+from genro_proxy.sql.table import RecordUpdater, Table
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
@@ -825,7 +825,7 @@ class TestTableRecord:
 
     async def test_record_not_found_raises(self, pg_db):
         """record() raises RecordNotFoundError when not found."""
-        from proxy.sql import RecordNotFoundError
+        from genro_proxy.sql import RecordNotFoundError
 
         table = TestTable(pg_db)
         await table.create_schema()
@@ -847,7 +847,7 @@ class TestTableRecord:
 
     async def test_record_duplicate_raises(self, pg_db):
         """record() raises RecordDuplicateError when multiple found."""
-        from proxy.sql import RecordDuplicateError
+        from genro_proxy.sql import RecordDuplicateError
 
         table = TestTable(pg_db)
         await table.create_schema()

@@ -8,7 +8,7 @@ edge cases and paths not reached by HTTP client tests.
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from proxy.entities.instance.endpoint import InstanceEndpoint
+from genro_proxy.entities.instance.endpoint import InstanceEndpoint
 
 
 @pytest.fixture

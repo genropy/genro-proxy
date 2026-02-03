@@ -4,7 +4,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from proxy.entities.command_log.endpoint import CommandLogEndpoint
+from genro_proxy.entities.command_log.endpoint import CommandLogEndpoint
 
 
 @pytest.fixture

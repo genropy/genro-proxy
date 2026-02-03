@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from proxy.sql import SqlDb
-from proxy.sql.table import Table
+from genro_proxy.sql import SqlDb
+from genro_proxy.sql.table import Table
 
 
 class DummyTable(Table):
@@ -213,7 +213,7 @@ class TestSqlDbDiscover:
     def test_discover_finds_entity_tables(self):
         """discover() finds and registers Table classes from entity packages."""
         db = SqlDb(":memory:")
-        tables = db.discover("proxy.entities")
+        tables = db.discover("genro_proxy.entities")
 
         # Should find all 5 base entities
         assert len(tables) >= 5
@@ -226,7 +226,7 @@ class TestSqlDbDiscover:
     def test_discover_returns_registered_tables(self):
         """discover() returns list of registered table instances."""
         db = SqlDb(":memory:")
-        tables = db.discover("proxy.entities")
+        tables = db.discover("genro_proxy.entities")
 
         for table in tables:
             assert isinstance(table, Table)
@@ -237,11 +237,11 @@ class TestSqlDbDiscover:
         db = SqlDb(":memory:")
 
         # First discover
-        tables1 = db.discover("proxy.entities")
+        tables1 = db.discover("genro_proxy.entities")
         count1 = len(tables1)
 
         # Second discover should return empty (all already registered)
-        tables2 = db.discover("proxy.entities")
+        tables2 = db.discover("genro_proxy.entities")
         assert len(tables2) == 0
 
         # Total tables unchanged
@@ -250,9 +250,9 @@ class TestSqlDbDiscover:
     def test_discover_multiple_packages(self):
         """discover() can scan multiple packages."""
         db = SqlDb(":memory:")
-        tables = db.discover("proxy.entities")
+        tables = db.discover("genro_proxy.entities")
 
-        # All tables registered from proxy.entities
+        # All tables registered from genro_proxy.entities
         assert "instance" in db.tables
         assert "tenants" in db.tables
 
@@ -266,5 +266,5 @@ class TestSqlDbDiscover:
         """discover() handles packages with no table modules."""
         db = SqlDb(":memory:")
         # proxy.sql has no entity sub-packages with table.py
-        tables = db.discover("proxy.sql")
+        tables = db.discover("genro_proxy.sql")
         assert tables == []

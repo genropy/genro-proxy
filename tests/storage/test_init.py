@@ -9,19 +9,19 @@ class TestStorageModuleImport:
 
     def test_storage_manager_exported(self):
         """StorageManager is exported from storage module."""
-        from proxy.storage import StorageManager
+        from genro_proxy.storage import StorageManager
 
         assert StorageManager is not None
 
     def test_storage_node_exported(self):
         """StorageNode is exported from storage module."""
-        from proxy.storage import StorageNode
+        from genro_proxy.storage import StorageNode
 
         assert StorageNode is not None
 
     def test_storage_node_has_cloud_methods(self):
         """StorageNode includes cloud methods (Apache 2.0)."""
-        from proxy.storage import StorageNode
+        from genro_proxy.storage import StorageNode
 
         # Cloud methods should be available
         assert hasattr(StorageNode, "_get_fs")

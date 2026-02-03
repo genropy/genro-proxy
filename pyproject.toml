@@ -68,7 +68,7 @@ cloud = ["genro-proxy[s3,gcs,azure]"]
 all = ["genro-proxy[dev,postgresql,cloud]"]
 
 [project.scripts]
-gproxy = "proxy.__main__:main"
+gproxy = "genro_proxy.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/genropy/genro-proxy"
@@ -77,12 +77,12 @@ Repository = "https://github.com/genropy/genro-proxy"
 Issues = "https://github.com/genropy/genro-proxy/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/proxy"]
+packages = ["src/genro_proxy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 norecursedirs = ["_build", "docs/_build", "docs", ".git"]
-addopts = "-v --cov=proxy --cov-report=term-missing"
+addopts = "-v --cov=genro_proxy --cov-report=term-missing"
 asyncio_mode = "auto"
 
 [tool.black]
@@ -111,17 +111,17 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["proxy"]
+known-first-party = ["genro_proxy"]
 
 [tool.mypy]
 python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
-files = ["src/proxy"]
+files = ["src/genro_proxy"]
 
 [tool.coverage.run]
-source = ["src/proxy"]
+source = ["src/genro_proxy"]
 branch = true
 
 [tool.coverage.report]

@@ -5,8 +5,8 @@ import time
 
 import pytest
 
-from proxy.storage.manager import StorageManager
-from proxy.storage.node import StorageError, StorageNode
+from genro_proxy.storage.manager import StorageManager
+from genro_proxy.storage.node import StorageError, StorageNode
 
 
 @pytest.fixture

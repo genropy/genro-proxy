@@ -6,8 +6,8 @@ from __future__ import annotations
 import pytest
 import pytest_asyncio
 
-from proxy.sql import SqlDb, Table, String, Integer
-from proxy.sql.query import Query, WhereBuilder, parse_where_kwargs
+from genro_proxy.sql import SqlDb, Table, String, Integer
+from genro_proxy.sql.query import Query, WhereBuilder, parse_where_kwargs
 
 
 # ---------------------------------------------------------------------------

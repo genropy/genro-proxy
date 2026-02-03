@@ -4,7 +4,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from proxy.entities.storage.endpoint import StorageEndpoint
+from genro_proxy.entities.storage.endpoint import StorageEndpoint
 
 
 class MockRecordContextManager:

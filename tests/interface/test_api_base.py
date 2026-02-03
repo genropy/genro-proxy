@@ -10,8 +10,8 @@ import pytest
 from fastapi import APIRouter
 from fastapi.testclient import TestClient
 
-from proxy.interface.api_base import register_api_endpoint
-from proxy.interface.endpoint_base import POST, BaseEndpoint
+from genro_proxy.interface.api_base import register_api_endpoint
+from genro_proxy.interface.endpoint_base import POST, BaseEndpoint
 
 
 class MockDb:
@@ -168,7 +168,7 @@ class TestApiAuthentication:
         """Create FastAPI app with authentication enabled."""
         from fastapi import FastAPI
 
-        from proxy.interface.api_base import auth_dependency, register_api_endpoint
+        from genro_proxy.interface.api_base import auth_dependency, register_api_endpoint
 
         app = FastAPI()
         app.state.api_token = "secret-admin-token"
@@ -237,7 +237,7 @@ class TestApiNoAuth:
         """Create FastAPI app without authentication (api_token=None)."""
         from fastapi import FastAPI
 
-        from proxy.interface.api_base import auth_dependency, register_api_endpoint
+        from genro_proxy.interface.api_base import auth_dependency, register_api_endpoint
 
         app = FastAPI()
         app.state.api_token = None  # No auth

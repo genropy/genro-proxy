@@ -47,7 +47,7 @@ class SqlDb:
 
         # For schema setup
         async with db.connection():
-            db.discover("proxy.entities")
+            db.discover("genro_proxy.entities")
             await db.check_structure()
 
         # For transactions (automatic commit/rollback)
@@ -158,16 +158,16 @@ class SqlDb:
         then registers any Table subclass found.
 
         Args:
-            *packages: Package paths (e.g., "proxy.entities", "myproxy.entities")
+            *packages: Package paths (e.g., "genro_proxy.entities", "myproxy.entities")
 
         Returns:
             List of registered table instances.
 
         Example:
-            db.discover("proxy.entities")
+            db.discover("genro_proxy.entities")
             # Registers: InstanceTable, TenantsTable, AccountsTable, etc.
 
-            db.discover("proxy.entities", "myproxy.entities")
+            db.discover("genro_proxy.entities", "myproxy.entities")
             # Registers tables from both packages
         """
         registered: list[Table] = []

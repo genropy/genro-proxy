@@ -4,7 +4,7 @@
 import pytest
 from prometheus_client import CollectorRegistry
 
-from proxy.prometheus.metrics import MailMetrics
+from genro_proxy.prometheus.metrics import MailMetrics
 
 
 @pytest.fixture

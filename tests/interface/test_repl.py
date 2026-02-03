@@ -3,7 +3,7 @@
 
 import pytest
 
-from proxy.interface.repl import RESERVED_ATTR, is_reserved, repl_wrap, reserved
+from genro_proxy.interface.repl import RESERVED_ATTR, is_reserved, repl_wrap, reserved
 
 
 class TestReservedDecorator:

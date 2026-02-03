@@ -9,7 +9,7 @@ Key sources (in priority order):
 2. /run/secrets/encryption_key file (Docker/Kubernetes secrets)
 
 Usage:
-    from proxy.encryption import encrypt_value, decrypt_value
+    from genro_proxy.encryption import encrypt_value, decrypt_value
 
     # Encrypt before storing
     encrypted = encrypt_value("my-secret-password")

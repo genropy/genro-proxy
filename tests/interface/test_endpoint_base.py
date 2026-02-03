@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from proxy.interface.endpoint_base import POST, BaseEndpoint
+from genro_proxy.interface.endpoint_base import POST, BaseEndpoint
 
 
 class MockDb:
@@ -261,7 +261,7 @@ class TestEndpointDiscoveryFilters:
     @pytest.fixture
     def manager(self):
         """Create EndpointManager with mock proxy."""
-        from proxy.interface.endpoint_base import EndpointManager
+        from genro_proxy.interface.endpoint_base import EndpointManager
 
         return EndpointManager(MockProxy())
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from proxy.proxy_base import ProxyBase, ProxyConfigBase
+from genro_proxy.proxy_base import ProxyBase, ProxyConfigBase
 
 
 class TestProxyBaseInit:

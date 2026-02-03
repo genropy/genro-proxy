@@ -10,7 +10,7 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from proxy.interface.cli_base import (
+from genro_proxy.interface.cli_base import (
     CliManager,
     _annotation_to_click_type,
     _create_click_command,
@@ -75,31 +75,31 @@ class TestPrintResult:
 
     def test_print_dict(self, capsys):
         """Print dict as key-value pairs."""
-        with patch("proxy.interface.cli_base.console") as mock_console:
+        with patch("genro_proxy.interface.cli_base.console") as mock_console:
             _print_result({"key1": "value1", "key2": "value2"})
             assert mock_console.print.call_count == 2
 
     def test_print_list_of_dicts(self):
         """Print list of dicts as table."""
-        with patch("proxy.interface.cli_base.console") as mock_console:
+        with patch("genro_proxy.interface.cli_base.console") as mock_console:
             _print_result([{"id": "1", "name": "test"}])
             mock_console.print.assert_called_once()
 
     def test_print_simple_list(self):
         """Print simple list with bullets."""
-        with patch("proxy.interface.cli_base.console") as mock_console:
+        with patch("genro_proxy.interface.cli_base.console") as mock_console:
             _print_result(["item1", "item2"])
             assert mock_console.print.call_count == 2
 
     def test_print_string(self):
         """Print string directly."""
-        with patch("proxy.interface.cli_base.console") as mock_console:
+        with patch("genro_proxy.interface.cli_base.console") as mock_console:
             _print_result("hello")
             mock_console.print.assert_called_once_with("hello")
 
     def test_print_empty_list(self):
         """Print empty list."""
-        with patch("proxy.interface.cli_base.console") as mock_console:
+        with patch("genro_proxy.interface.cli_base.console") as mock_console:
             _print_result([])
             mock_console.print.assert_not_called()
 
@@ -348,7 +348,7 @@ class TestCliManager:
         """_get_server_module returns default path."""
         proxy = MagicMock()
         manager = CliManager(proxy)
-        assert manager._get_server_module() == "proxy.server:app"
+        assert manager._get_server_module() == "genro_proxy.server:app"
 
 
 class TestCliIntegration:

@@ -3,7 +3,7 @@
 
 import pytest
 
-from proxy.encryption import (
+from genro_proxy.encryption import (
     ENCRYPTED_PREFIX,
     EncryptionError,
     decrypt_value_with_key,
@@ -147,7 +147,7 @@ class TestGlobalKeyEncryption:
     def test_encrypt_decrypt_with_env_key(self, monkeypatch, test_key):
         """Should use key from GENRO_PROXY_ENCRYPTION_KEY env var."""
         import base64
-        from proxy.encryption import (
+        from genro_proxy.encryption import (
             decrypt_value,
             encrypt_value,
             set_key_for_testing,
@@ -172,7 +172,7 @@ class TestGlobalKeyEncryption:
 
     def test_missing_key_raises_error(self, monkeypatch):
         """Should raise EncryptionKeyNotConfigured when no key available."""
-        from proxy.encryption import (
+        from genro_proxy.encryption import (
             EncryptionKeyNotConfigured,
             encrypt_value,
             set_key_for_testing,
@@ -187,7 +187,7 @@ class TestGlobalKeyEncryption:
 
     def test_invalid_env_key_raises_error(self, monkeypatch):
         """Invalid base64 key in env var should raise EncryptionError."""
-        from proxy.encryption import encrypt_value, set_key_for_testing
+        from genro_proxy.encryption import encrypt_value, set_key_for_testing
 
         set_key_for_testing(None)
         monkeypatch.setenv("GENRO_PROXY_ENCRYPTION_KEY", "not-valid-base64!!!")
@@ -200,7 +200,7 @@ class TestGlobalKeyEncryption:
     def test_wrong_size_env_key_raises_error(self, monkeypatch):
         """Key with wrong size in env var should raise EncryptionError."""
         import base64
-        from proxy.encryption import encrypt_value, set_key_for_testing
+        from genro_proxy.encryption import encrypt_value, set_key_for_testing
 
         set_key_for_testing(None)
         wrong_size_key = base64.b64encode(b"only-16-bytes!!!").decode()
@@ -213,7 +213,7 @@ class TestGlobalKeyEncryption:
 
     def test_set_key_for_testing(self, test_key):
         """set_key_for_testing should set the global key."""
-        from proxy.encryption import (
+        from genro_proxy.encryption import (
             decrypt_value,
             encrypt_value,
             set_key_for_testing,
@@ -232,14 +232,14 @@ class TestGlobalKeyEncryption:
 
     def test_set_key_for_testing_invalid_size(self):
         """set_key_for_testing should reject invalid key size."""
-        from proxy.encryption import set_key_for_testing
+        from genro_proxy.encryption import set_key_for_testing
 
         with pytest.raises(ValueError, match="must be 32 bytes"):
             set_key_for_testing(b"too-short")
 
     def test_decrypt_value_empty_passthrough(self, test_key):
         """decrypt_value should pass through empty/None values."""
-        from proxy.encryption import decrypt_value, set_key_for_testing
+        from genro_proxy.encryption import decrypt_value, set_key_for_testing
 
         set_key_for_testing(test_key)
 
@@ -251,7 +251,7 @@ class TestGlobalKeyEncryption:
 
     def test_encrypt_value_empty_passthrough(self, test_key):
         """encrypt_value should pass through empty values."""
-        from proxy.encryption import encrypt_value, set_key_for_testing
+        from genro_proxy.encryption import encrypt_value, set_key_for_testing
 
         set_key_for_testing(test_key)
 
@@ -261,7 +261,7 @@ class TestGlobalKeyEncryption:
 
     def test_encrypt_value_already_encrypted_passthrough(self, test_key):
         """encrypt_value should pass through already encrypted values."""
-        from proxy.encryption import encrypt_value, set_key_for_testing
+        from genro_proxy.encryption import encrypt_value, set_key_for_testing
 
         set_key_for_testing(test_key)
 
@@ -279,7 +279,7 @@ class TestSecretsFileLoading:
     def test_secrets_file_with_valid_key(self, tmp_path, monkeypatch):
         """Should load key from /run/secrets/encryption_key if exists."""
         from unittest.mock import patch, MagicMock
-        from proxy.encryption import set_key_for_testing, encrypt_value
+        from genro_proxy.encryption import set_key_for_testing, encrypt_value
 
         # Clear cached key and env var
         set_key_for_testing(None)
@@ -293,7 +293,7 @@ class TestSecretsFileLoading:
         mock_path_instance.exists.return_value = True
         mock_path_instance.read_bytes.return_value = valid_key + b"\n"  # With newline
 
-        with patch("proxy.encryption.Path") as mock_path_cls:
+        with patch("genro_proxy.encryption.Path") as mock_path_cls:
             mock_path_cls.return_value = mock_path_instance
 
             encrypted = encrypt_value("test-secret")
@@ -304,7 +304,7 @@ class TestSecretsFileLoading:
     def test_secrets_file_with_wrong_size_key(self, monkeypatch):
         """Should raise error if secrets file key has wrong size."""
         from unittest.mock import patch, MagicMock
-        from proxy.encryption import (
+        from genro_proxy.encryption import (
             set_key_for_testing,
             encrypt_value,
             EncryptionError,
@@ -321,7 +321,7 @@ class TestSecretsFileLoading:
         mock_path_instance.exists.return_value = True
         mock_path_instance.read_bytes.return_value = wrong_size_key
 
-        with patch("proxy.encryption.Path") as mock_path_cls:
+        with patch("genro_proxy.encryption.Path") as mock_path_cls:
             mock_path_cls.return_value = mock_path_instance
 
             with pytest.raises(EncryptionError, match="must be 32 bytes"):
@@ -336,7 +336,7 @@ class TestCryptographyImportError:
     def test_encrypt_value_without_cryptography(self, monkeypatch, test_key):
         """encrypt_value should raise clear error if cryptography not installed."""
         import sys
-        from proxy.encryption import set_key_for_testing
+        from genro_proxy.encryption import set_key_for_testing
         import tools.encryption as enc_module
 
         set_key_for_testing(test_key)
@@ -368,7 +368,7 @@ class TestCryptographyImportError:
         # Since cryptography is installed, we can just verify the normal path works
         # The import error code path (lines 234-235, 271-272) exists for environments
         # without cryptography installed
-        from proxy.encryption import encrypt_value_with_key, decrypt_value_with_key
+        from genro_proxy.encryption import encrypt_value_with_key, decrypt_value_with_key
 
         encrypted = encrypt_value_with_key("test", test_key)
         decrypted = decrypt_value_with_key(encrypted, test_key)
@@ -380,7 +380,7 @@ class TestDecryptValueGlobal:
 
     def test_decrypt_value_with_invalid_base64(self, test_key):
         """decrypt_value raises error for invalid base64 data."""
-        from proxy.encryption import decrypt_value, set_key_for_testing
+        from genro_proxy.encryption import decrypt_value, set_key_for_testing
 
         set_key_for_testing(test_key)
 
@@ -392,7 +392,7 @@ class TestDecryptValueGlobal:
     def test_decrypt_value_with_truncated_data(self, test_key):
         """decrypt_value raises error for truncated ciphertext."""
         import base64
-        from proxy.encryption import decrypt_value, set_key_for_testing
+        from genro_proxy.encryption import decrypt_value, set_key_for_testing
 
         set_key_for_testing(test_key)
 
@@ -407,7 +407,7 @@ class TestDecryptValueGlobal:
     def test_decrypt_value_with_wrong_key(self, test_key):
         """decrypt_value raises error when decryption fails."""
         import base64
-        from proxy.encryption import (
+        from genro_proxy.encryption import (
             decrypt_value,
             encrypt_value,
             set_key_for_testing,

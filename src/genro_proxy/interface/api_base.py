@@ -24,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 if TYPE_CHECKING:
-    from proxy.proxy_base import ProxyBase
+    from genro_proxy.proxy_base import ProxyBase
 
 from .endpoint_base import BaseEndpoint
 

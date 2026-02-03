@@ -23,14 +23,14 @@ Resolution order for tenant:
 Example:
     Basic usage::
 
-        from proxy.interface.cli_context import resolve_context, require_context
+        from genro_proxy.interface.cli_context import resolve_context, require_context
 
         instance, tenant = resolve_context()
         instance, tenant = require_context(require_tenant=True)
 
     Custom configuration for mail-proxy::
 
-        from proxy.interface.cli_context import CliContext
+        from genro_proxy.interface.cli_context import CliContext
 
         ctx = CliContext(
             base_dir=Path.home() / ".mail-proxy",

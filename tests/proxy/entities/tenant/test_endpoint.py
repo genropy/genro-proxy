@@ -8,7 +8,7 @@ and error paths.
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from proxy.entities.tenant.endpoint import TenantEndpoint
+from genro_proxy.entities.tenant.endpoint import TenantEndpoint
 
 
 class MockRecordContextManager:
@@ -92,7 +92,7 @@ class TestTenantEndpointGet:
 
     async def test_get_not_found_raises(self, endpoint, mock_table):
         """get() raises ValueError when tenant not found."""
-        from proxy.sql import RecordNotFoundError
+        from genro_proxy.sql import RecordNotFoundError
         mock_table.record = AsyncMock(
             side_effect=RecordNotFoundError("tenants", pkey="nonexistent")
         )

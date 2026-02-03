@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from proxy.interface.cli_context import CliContext
+from genro_proxy.interface.cli_context import CliContext
 
 
 class TestCliContextParseContext:

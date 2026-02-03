@@ -336,7 +336,7 @@ class Table:
         if key is None:
             return data
 
-        from proxy.encryption import encrypt_value_with_key
+        from genro_proxy.encryption import encrypt_value_with_key
 
         result = dict(data)
         for col_name in encrypted_cols:
@@ -360,7 +360,7 @@ class Table:
         if key is None:
             return row
 
-        from proxy.encryption import decrypt_value_with_key
+        from genro_proxy.encryption import decrypt_value_with_key
 
         result = dict(row)
         for col_name in encrypted_cols:

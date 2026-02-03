@@ -4,7 +4,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from proxy.entities.account.endpoint import AccountEndpoint
+from genro_proxy.entities.account.endpoint import AccountEndpoint
 
 
 class MockRecordContextManager:
@@ -110,7 +110,7 @@ class TestAccountEndpointGet:
 
     async def test_get_nonexistent_raises(self, endpoint, mock_table):
         """Get non-existent account raises ValueError."""
-        from proxy.sql import RecordNotFoundError
+        from genro_proxy.sql import RecordNotFoundError
         mock_table.record = AsyncMock(
             side_effect=RecordNotFoundError("accounts", where={"tenant_id": "t1", "id": "nonexistent"})
         )

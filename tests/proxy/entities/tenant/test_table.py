@@ -3,8 +3,8 @@
 
 import pytest_asyncio
 
-from proxy.entities.tenant.table import TenantsTable
-from proxy.sql import SqlDb
+from genro_proxy.entities.tenant.table import TenantsTable
+from genro_proxy.sql import SqlDb
 
 
 @pytest_asyncio.fixture
