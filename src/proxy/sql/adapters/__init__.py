@@ -1,34 +1,47 @@
 # Copyright 2025 Softwell S.r.l. - SPDX-License-Identifier: Apache-2.0
-"""Database adapters for SQLite and PostgreSQL.
+"""Database adapters for SQLite and PostgreSQL with per-request connections.
 
 This package provides async database adapters with a unified interface
-for executing queries and CRUD operations.
+for executing queries and transaction management. Each request gets
+its own isolated connection via contextvars in SqlDb.
 
 Components:
     DbAdapter: Abstract base class defining the adapter interface.
-    SqliteAdapter: SQLite adapter using aiosqlite with per-operation connections.
+    SqliteAdapter: SQLite adapter using aiosqlite with per-request connections.
     PostgresAdapter: PostgreSQL adapter using psycopg3 with connection pooling.
     get_adapter: Factory function to create adapters from connection strings.
 
+Connection Model:
+    Adapters provide connection management, SqlDb uses contextvars for isolation:
+
+    - acquire(): Returns a new connection (from pool or new file handle)
+    - release(conn): Returns connection to pool or closes it
+    - commit(conn): COMMIT transaction on connection
+    - rollback(conn): ROLLBACK transaction on connection
+    - shutdown(): Closes pool (PostgreSQL) or no-op (SQLite)
+
+    This model ensures:
+    - Each async task gets its own connection via contextvars
+    - No shared state between concurrent requests
+    - Proper transaction isolation
+
 Example:
-    Create adapter from connection string::
+    Usage via SqlDb (recommended)::
 
-        from sql.adapters import get_adapter
+        from proxy.sql import SqlDb
 
-        # SQLite
-        adapter = get_adapter("/data/app.db")
-        adapter = get_adapter("sqlite::memory:")
+        db = SqlDb("/data/app.db")  # or "postgresql://..."
+        async with db.connection():
+            await db.execute("INSERT INTO users (id) VALUES (:id)", {"id": "u1"})
+            await db.execute("UPDATE users SET active = 1 WHERE id = :id", {"id": "u1"})
+        # COMMIT on success, ROLLBACK on exception
 
-        # PostgreSQL
-        adapter = get_adapter("postgresql://user:pass@localhost:5432/mydb")
+    Application shutdown::
 
-        await adapter.connect()
-        rows = await adapter.fetch_all("SELECT * FROM users")
-        await adapter.close()
+        await db.shutdown()  # Close the pool (PostgreSQL)
 
 Note:
-    PostgreSQL requires psycopg: `pip install genro-mail-proxy[postgresql]`.
-    SQLite uses per-operation connections (no persistent pool).
+    PostgreSQL requires psycopg: `pip install genro-proxy[postgresql]`.
 """
 
 from .base import DbAdapter

@@ -15,17 +15,55 @@ if TYPE_CHECKING:
     from .sqldb import SqlDb
 
 
+class RecordNotFoundError(Exception):
+    """Raised when record() finds no matching record and ignore_missing=False."""
+
+    def __init__(self, table: str, pkey: Any = None, where: dict[str, Any] | None = None):
+        self.table = table
+        self.pkey = pkey
+        self.where = where
+        if pkey is not None:
+            msg = f"Record not found in '{table}' with pkey={pkey!r}"
+        elif where:
+            msg = f"Record not found in '{table}' with where={where!r}"
+        else:
+            msg = f"Record not found in '{table}'"
+        super().__init__(msg)
+
+
+class RecordDuplicateError(Exception):
+    """Raised when record() finds multiple records and ignore_duplicate=False."""
+
+    def __init__(self, table: str, count: int, pkey: Any = None, where: dict[str, Any] | None = None):
+        self.table = table
+        self.count = count
+        self.pkey = pkey
+        self.where = where
+        if pkey is not None:
+            msg = f"Expected 1 record in '{table}' with pkey={pkey!r}, found {count}"
+        elif where:
+            msg = f"Expected 1 record in '{table}' with where={where!r}, found {count}"
+        else:
+            msg = f"Expected 1 record in '{table}', found {count}"
+        super().__init__(msg)
+
+
 class RecordUpdater:
     """Async context manager for record update with locking and triggers.
 
     Usage:
-        async with table.record(pk) as record:
+        async with table.record_to_update(pk) as record:
             record['field'] = 'value'
         # → triggers update() with old_record
 
-        async with table.record(pk, insert_missing=True) as record:
+        async with table.record_to_update(pk, insert_missing=True) as record:
             record['field'] = 'value'
         # → insert() if not exists, update() if exists
+
+        # With initial values via kwargs:
+        async with table.record_to_update(pk, insert_missing=True, name='Test') as record:
+            record['other'] = 'value'
+        # → record already has name='Test'
 
     The context manager:
     - __aenter__: SELECT FOR UPDATE (PostgreSQL) or SELECT (SQLite), saves old_record
@@ -34,6 +72,14 @@ class RecordUpdater:
 
     Single key: record("uuid-123") or record("uuid-123", pkey="pk")
     Composite:  record({"tenant_id": "t1", "id": "acc1"})
+
+    Args:
+        pkey_value: Primary key value or dict for composite keys.
+        insert_missing: If True, insert new record if not found (upsert).
+        ignore_missing: If True, return empty dict if not found (no error).
+        for_update: If True, use SELECT FOR UPDATE (PostgreSQL).
+        raw: If True, bypass triggers (use raw_insert/raw_update).
+        **kwargs: Initial values to set on the record.
     """
 
     def __init__(
@@ -42,11 +88,17 @@ class RecordUpdater:
         pkey: str | None,
         pkey_value: Any,
         insert_missing: bool = False,
+        ignore_missing: bool = False,
         for_update: bool = True,
+        raw: bool = False,
+        **kwargs: Any,
     ):
         self.table = table
         self.insert_missing = insert_missing
+        self.ignore_missing = ignore_missing
         self.for_update = for_update
+        self.raw = raw
+        self.kwargs = kwargs
         self.record: dict[str, Any] | None = None
         self.old_record: dict[str, Any] | None = None
         self.is_insert = False
@@ -59,18 +111,29 @@ class RecordUpdater:
 
     async def __aenter__(self) -> dict[str, Any]:
         if self.for_update:
-            self.old_record = await self.table.select_for_update(self.where)
+            self.old_record = await self.table.record(
+                where=self.where, ignore_missing=True, for_update=True
+            )
         else:
-            self.old_record = await self.table.select_one(where=self.where)
+            self.old_record = await self.table.record(where=self.where, ignore_missing=True)
 
-        if self.old_record is None:
+        if not self.old_record:
             if self.insert_missing:
                 self.record = dict(self.where)  # Initialize with key columns
                 self.is_insert = True
+            elif self.ignore_missing:
+                self.record = {}
             else:
                 self.record = {}
+            self.old_record = None  # Mark as not found for later checks
         else:
             self.record = dict(self.old_record)
+
+        # Apply kwargs as initial values
+        if self.record is not None:
+            for k, v in self.kwargs.items():
+                if v is not None:
+                    self.record[k] = v
 
         return self.record  # type: ignore[return-value]
 
@@ -82,9 +145,9 @@ class RecordUpdater:
             return
 
         if self.is_insert:
-            await self.table.insert(self.record)
+            await self.table.insert(self.record, raw=self.raw)
         elif self.old_record:
-            await self.table.update(self.record, self.where)
+            await self.table.update(self.record, self.where, raw=self.raw)
 
 
 class Table:
@@ -198,7 +261,7 @@ class Table:
 
     async def create_schema(self) -> None:
         """Create table if not exists."""
-        await self.db.adapter.execute(self.create_table_sql())
+        await self.db.execute(self.create_table_sql())
 
     async def add_column_if_missing(self, column_name: str) -> None:
         """Add column if it doesn't exist (migration helper)."""
@@ -207,7 +270,7 @@ class Table:
             raise ValueError(f"Column '{column_name}' not defined in {self.name}")
 
         try:
-            await self.db.adapter.execute(f"ALTER TABLE {self.name} ADD COLUMN {col.to_sql()}")
+            await self.db.execute(f"ALTER TABLE {self.name} ADD COLUMN {col.to_sql()}")
         except Exception:
             pass  # Column already exists
 
@@ -227,7 +290,7 @@ class Table:
             # Use IF NOT EXISTS to avoid transaction abort in PostgreSQL
             sql = f"ALTER TABLE {self.name} ADD COLUMN IF NOT EXISTS {col.to_sql()}"
             try:
-                await self.db.adapter.execute(sql)
+                await self.db.execute(sql)
             except Exception:
                 pass  # SQLite < 3.35 doesn't support IF NOT EXISTS for ADD COLUMN
 
@@ -325,7 +388,7 @@ class Table:
         it will be populated in data after insert.
         """
         if raw:
-            await self.db.adapter.insert(self.name, data)
+            await self.db.insert(self.name, data)
             return 1
 
         record = await self.trigger_on_inserting(data)
@@ -334,13 +397,13 @@ class Table:
         # Check if pk is autoincrement (new_pkey_value returns None)
         if self.pkey and self.pkey not in record:
             # Autoincrement: use insert_returning_id to get the generated id
-            generated_id = await self.db.adapter.insert_returning_id(self.name, encoded, self.pkey)
+            generated_id = await self.db.insert_returning_id(self.name, encoded, self.pkey)
             if generated_id is not None:
                 data[self.pkey] = generated_id
                 record[self.pkey] = generated_id
         else:
             # UUID pk already in record from trigger_on_inserting, or no pk
-            await self.db.adapter.insert(self.name, encoded)
+            await self.db.insert(self.name, encoded)
             # Ensure data has the pk (trigger may have added it to record)
             if self.pkey and self.pkey in record and self.pkey not in data:
                 data[self.pkey] = record[self.pkey]
@@ -368,33 +431,97 @@ class Table:
         Returns:
             List of row dicts.
         """
-        rows = await self.db.adapter.select(self.name, columns, where, order_by, limit)
+        rows = await self.db.select(self.name, columns, where, order_by, limit)
         if raw:
             return rows
         return [self._decrypt_fields(self._decode_json_fields(row)) for row in rows]
 
-    async def select_one(
+    async def record(
         self,
-        columns: list[str] | None = None,
+        pkey: Any = None,
         where: dict[str, Any] | None = None,
+        ignore_missing: bool = False,
+        ignore_duplicate: bool = False,
+        for_update: bool = False,
+        columns: list[str] | None = None,
         raw: bool = False,
-    ) -> dict[str, Any] | None:
-        """Select single row.
+    ) -> dict[str, Any]:
+        """Fetch a single record by primary key or where conditions.
+
+        This method expects exactly one record. Behavior on edge cases:
+        - No record found: raises RecordNotFoundError (or returns {} if ignore_missing=True)
+        - Multiple records: raises RecordDuplicateError (or returns first if ignore_duplicate=True)
 
         Args:
+            pkey: Primary key value (uses self.pkey column).
+            where: WHERE conditions dict (alternative to pkey).
+            ignore_missing: If True, return {} instead of raising RecordNotFoundError.
+            ignore_duplicate: If True, return first record instead of raising RecordDuplicateError.
+            for_update: If True, use SELECT FOR UPDATE (PostgreSQL).
             columns: Columns to select (None = all).
-            where: WHERE conditions.
             raw: If True, skip JSON decoding and decryption.
 
         Returns:
-            Row dict or None.
+            Record dict, or {} if not found and ignore_missing=True.
+
+        Raises:
+            RecordNotFoundError: If no record found and ignore_missing=False.
+            RecordDuplicateError: If multiple records found and ignore_duplicate=False.
+            ValueError: If neither pkey nor where is provided.
+
+        Examples:
+            # By primary key
+            rec = await table.record('uuid-123')
+
+            # By where conditions
+            rec = await table.record(where={'email': 'user@example.com'})
+
+            # With ignore_missing (returns {} if not found)
+            rec = await table.record('maybe-exists', ignore_missing=True)
+            if not rec:
+                print("Not found")
+
+            # For update (PostgreSQL lock)
+            rec = await table.record('uuid-123', for_update=True)
         """
-        row = await self.db.adapter.select_one(self.name, columns, where)
-        if row is None:
-            return None
-        if raw:
-            return row
-        return self._decrypt_fields(self._decode_json_fields(row))
+        # Build where clause
+        if pkey is not None:
+            if self.pkey is None:
+                raise ValueError(f"Table {self.name} has no primary key defined")
+            effective_where = {self.pkey: pkey}
+        elif where is not None:
+            effective_where = where
+        else:
+            raise ValueError("record() requires either pkey or where argument")
+
+        # Execute query
+        if for_update:
+            # select_for_update already handles decoding/decryption
+            row = await self.select_for_update(effective_where, columns)
+            if row is None:
+                rows: list[dict[str, Any]] = []
+            else:
+                rows = [row]
+        else:
+            # Fetch with limit 2 to detect duplicates
+            rows = await self.db.select(self.name, columns, effective_where, limit=2)
+            if not raw:
+                rows = [self._decrypt_fields(self._decode_json_fields(r)) for r in rows]
+
+        # Handle results
+        if len(rows) == 0:
+            if ignore_missing:
+                return {}
+            raise RecordNotFoundError(self.name, pkey, where)
+
+        if len(rows) > 1:
+            if ignore_duplicate:
+                return rows[0]
+            # Count actual duplicates for error message
+            count = await self.db.count(self.name, effective_where)
+            raise RecordDuplicateError(self.name, count, pkey, where)
+
+        return rows[0]
 
     async def select_for_update(
         self,
@@ -411,54 +538,67 @@ class Table:
             Row dict or None if not found.
         """
         cols_sql = ", ".join(columns) if columns else "*"
-        adapter = self.db.adapter
 
-        conditions = [f"{k} = {adapter._placeholder(k)}" for k in where]
+        conditions = [f"{k} = {self.db._placeholder(k)}" for k in where]
         where_sql = " AND ".join(conditions)
-        lock_clause = adapter.for_update_clause()
+        lock_clause = self.db.adapter.for_update_clause()
 
         query = f"SELECT {cols_sql} FROM {self.name} WHERE {where_sql}{lock_clause}"
-        row = await adapter.fetch_one(query, where)
+        row = await self.db.fetch_one(query, where)
         return self._decrypt_fields(self._decode_json_fields(row)) if row else None
 
-    def record(
+    def record_to_update(
         self,
         pkey_value: Any,
         insert_missing: bool = False,
+        ignore_missing: bool = False,
         for_update: bool = True,
+        raw: bool = False,
+        **kwargs: Any,
     ) -> RecordUpdater:
         """Return async context manager for record update.
 
         Args:
             pkey_value: Primary key value, or dict for composite keys.
             insert_missing: If True, insert new record if not found (upsert).
+            ignore_missing: If True, return empty dict if not found (no error).
             for_update: If True, use SELECT FOR UPDATE (PostgreSQL).
+            raw: If True, bypass triggers (use raw insert/update).
+            **kwargs: Initial values to set on the record.
 
         Returns:
             RecordUpdater context manager.
 
         Usage:
             # Single key:
-            async with table.record('uuid-123') as rec:
+            async with table.record_to_update('uuid-123') as rec:
                 rec['name'] = 'New Name'
 
             # Composite key (dict):
-            async with table.record({'tenant_id': 't1', 'id': 'acc1'}) as rec:
+            async with table.record_to_update({'tenant_id': 't1', 'id': 'acc1'}) as rec:
                 rec['host'] = 'smtp.example.com'
 
             # Upsert (insert if missing):
-            async with table.record({'tenant_id': 't1', 'id': 'new'}, insert_missing=True) as rec:
+            async with table.record_to_update({'tenant_id': 't1', 'id': 'new'}, insert_missing=True) as rec:
                 rec['host'] = 'smtp.new.com'
+
+            # With initial values:
+            async with table.record_to_update('pk', insert_missing=True, name='Test') as rec:
+                rec['other'] = 'value'
         """
         # For composite keys (dict), pkey is not needed
         if isinstance(pkey_value, dict):
-            return RecordUpdater(self, None, pkey_value, insert_missing, for_update)
+            return RecordUpdater(
+                self, None, pkey_value, insert_missing, ignore_missing, for_update, raw, **kwargs
+            )
 
         # For single key, use self.pkey
         if self.pkey is None:
             raise ValueError(f"Table {self.name} has no primary key defined")
 
-        return RecordUpdater(self, self.pkey, pkey_value, insert_missing, for_update)
+        return RecordUpdater(
+            self, self.pkey, pkey_value, insert_missing, ignore_missing, for_update, raw, **kwargs
+        )
 
     async def update(
         self, values: dict[str, Any], where: dict[str, Any], raw: bool = False
@@ -474,12 +614,12 @@ class Table:
             Number of affected rows.
         """
         if raw:
-            return await self.db.adapter.update(self.name, values, where)
+            return await self.db.update(self.name, values, where)
 
         old_record = await self.select_for_update(where)
         record = await self.trigger_on_updating(values, old_record or {})
         encoded = self._encrypt_fields(self._encode_json_fields(record))
-        result = await self.db.adapter.update(self.name, encoded, where)
+        result = await self.db.update(self.name, encoded, where)
         if result > 0 and old_record:
             await self.trigger_on_updated(record, old_record)
         return result
@@ -519,33 +659,31 @@ class Table:
         if pkey is None:
             raise ValueError(f"Table {self.name} has no primary key defined")
 
-        adapter = self.db.adapter
-
         # Raw mode: single UPDATE statement, no triggers
         if raw:
             if updater is None or callable(updater):
                 raise ValueError("raw=True requires updater to be a dict")
 
-            set_parts = [f"{k} = {adapter._placeholder(k)}" for k in updater]
+            set_parts = [f"{k} = {self.db._placeholder(k)}" for k in updater]
             set_clause = ", ".join(set_parts)
 
             params: dict[str, Any] = dict(updater)
             params.update({f"pk_{i}": pk for i, pk in enumerate(pkeys)})
             placeholders = ", ".join(
-                f"{adapter._placeholder(f'pk_{i}')}" for i in range(len(pkeys))
+                f"{self.db._placeholder(f'pk_{i}')}" for i in range(len(pkeys))
             )
 
             query = f"UPDATE {self.name} SET {set_clause} WHERE {pkey} IN ({placeholders})"
-            return await adapter.execute(query, params)
+            return await self.db.execute(query, params)
 
         # Normal mode: SELECT + N updates with triggers
         params = {}
         params.update({f"pk_{i}": pk for i, pk in enumerate(pkeys)})
         placeholders = ", ".join(
-            f"{adapter._placeholder(f'pk_{i}')}" for i in range(len(pkeys))
+            f"{self.db._placeholder(f'pk_{i}')}" for i in range(len(pkeys))
         )
         query = f"SELECT * FROM {self.name} WHERE {pkey} IN ({placeholders})"
-        rows = await adapter.fetch_all(query, params)
+        rows = await self.db.fetch_all(query, params)
 
         records_by_pk = {row[pkey]: dict(row) for row in rows}
 
@@ -569,7 +707,7 @@ class Table:
             # Triggers and encoding
             new_record = await self.trigger_on_updating(new_record, old_record)
             encoded = self._encrypt_fields(self._encode_json_fields(new_record))
-            result = await adapter.update(self.name, encoded, {pkey: pk_value})
+            result = await self.db.update(self.name, encoded, {pkey: pk_value})
             if result > 0:
                 await self.trigger_on_updated(new_record, old_record)
                 updated += 1
@@ -587,23 +725,23 @@ class Table:
             Number of deleted rows.
         """
         if raw:
-            return await self.db.adapter.delete(self.name, where)
+            return await self.db.delete(self.name, where)
 
-        record = await self.select_one(where=where)
-        if record:
-            await self.trigger_on_deleting(record)
-        result = await self.db.adapter.delete(self.name, where)
-        if result > 0 and record:
-            await self.trigger_on_deleted(record)
+        rec = await self.record(where=where, ignore_missing=True)
+        if rec:
+            await self.trigger_on_deleting(rec)
+        result = await self.db.delete(self.name, where)
+        if result > 0 and rec:
+            await self.trigger_on_deleted(rec)
         return result
 
     async def exists(self, where: dict[str, Any]) -> bool:
         """Check if row exists."""
-        return await self.db.adapter.exists(self.name, where)
+        return await self.db.exists(self.name, where)
 
     async def count(self, where: dict[str, Any] | None = None) -> int:
         """Count rows."""
-        return await self.db.adapter.count(self.name, where)
+        return await self.db.count(self.name, where)
 
     # -------------------------------------------------------------------------
     # Query Builder (fluent API)
@@ -691,7 +829,7 @@ class Table:
         self, query: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
         """Execute query, return single row with JSON decode and decryption."""
-        row = await self.db.adapter.fetch_one(query, params)
+        row = await self.db.fetch_one(query, params)
         if row is None:
             return None
         return self._decrypt_fields(self._decode_json_fields(row))
@@ -700,12 +838,12 @@ class Table:
         self, query: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
         """Execute query, return all rows with JSON decode and decryption."""
-        rows = await self.db.adapter.fetch_all(query, params)
+        rows = await self.db.fetch_all(query, params)
         return [self._decrypt_fields(self._decode_json_fields(row)) for row in rows]
 
     async def execute(self, query: str, params: dict[str, Any] | None = None) -> int:
         """Execute raw query, return affected row count."""
-        return await self.db.adapter.execute(query, params)
+        return await self.db.execute(query, params)
 
 
-__all__ = ["Table", "RecordUpdater"]
+__all__ = ["Table", "RecordUpdater", "RecordNotFoundError", "RecordDuplicateError"]

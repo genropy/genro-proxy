@@ -94,7 +94,7 @@ class TestTableInit:
     async def test_pkey_value_none_when_no_pkey(self, pg_db):
         """pkey_value returns None for table without pkey."""
         # Create the table first
-        await pg_db.adapter.execute(
+        await pg_db.execute(
             "CREATE TABLE IF NOT EXISTS no_pk_items (name TEXT, value INTEGER)"
         )
         table = NoPkTable(pg_db)
@@ -127,7 +127,7 @@ class TestTableSchema:
 
         # Should be able to insert
         await table.insert({"pk": "test-1", "name": "Test"})
-        result = await table.select_one(where={"pk": "test-1"})
+        result = await table.record(where={"pk": "test-1"})
         assert result["name"] == "Test"
 
     async def test_add_column_if_missing(self, pg_db):
@@ -173,7 +173,7 @@ class TestTableSchema:
 
         # Should be usable
         await table.insert({"pk": "test-3", "name": "Test", "synced_col": "synced"})
-        result = await table.select_one(where={"pk": "test-3"})
+        result = await table.record(where={"pk": "test-3"})
         assert result["synced_col"] == "synced"
 
 
@@ -192,7 +192,7 @@ class TestTableCRUD:
 
         await table.insert({"pk": "crud-1", "name": "CRUD Test", "value": 42})
 
-        result = await table.select_one(where={"pk": "crud-1"})
+        result = await table.record(where={"pk": "crud-1"})
         assert result["name"] == "CRUD Test"
         assert result["value"] == 42
 
@@ -239,7 +239,7 @@ class TestTableCRUD:
         await table.insert({"pk": "update-1", "name": "Original", "value": 10})
         await table.update({"name": "Updated", "value": 20}, {"pk": "update-1"})
 
-        result = await table.select_one(where={"pk": "update-1"})
+        result = await table.record(where={"pk": "update-1"})
         assert result["name"] == "Updated"
         assert result["value"] == 20
 
@@ -252,8 +252,8 @@ class TestTableCRUD:
         count = await table.delete({"pk": "delete-1"})
 
         assert count == 1
-        result = await table.select_one(where={"pk": "delete-1"})
-        assert result is None
+        result = await table.record(where={"pk": "delete-1"}, ignore_missing=True)
+        assert result == {}
 
     async def test_exists(self, pg_db):
         """exists() checks for record."""
@@ -294,7 +294,7 @@ class TestTableJSON:
         metadata = {"key": "value", "nested": {"a": 1, "b": [1, 2, 3]}}
         await table.insert({"pk": "json-1", "name": "JSON Test", "metadata": metadata})
 
-        result = await table.select_one(where={"pk": "json-1"})
+        result = await table.record(where={"pk": "json-1"})
         assert result["metadata"] == metadata
         assert result["metadata"]["nested"]["b"] == [1, 2, 3]
 
@@ -305,7 +305,7 @@ class TestTableJSON:
 
         await table.insert({"pk": "json-null", "name": "No JSON", "metadata": None})
 
-        result = await table.select_one(where={"pk": "json-null"})
+        result = await table.record(where={"pk": "json-null"})
         assert result["metadata"] is None
 
 
@@ -328,11 +328,11 @@ class TestTableEncryption:
         await table.insert({"pk": "enc-1", "name": "Encrypted", "secret": "my-secret"})
 
         # Raw read should show encrypted value
-        raw = await pg_db.adapter.select_one("test_items", where={"pk": "enc-1"})
+        raw = await pg_db.select_one("test_items", where={"pk": "enc-1"})
         assert raw["secret"].startswith("ENC:")
 
         # Table read should decrypt
-        result = await table.select_one(where={"pk": "enc-1"})
+        result = await table.record(where={"pk": "enc-1"})
         assert result["secret"] == "my-secret"
 
     async def test_encrypted_field_without_key(self, pg_db):
@@ -345,7 +345,7 @@ class TestTableEncryption:
 
         await table.insert({"pk": "noenc-1", "name": "No Encryption", "secret": "plain"})
 
-        result = await table.select_one(where={"pk": "noenc-1"})
+        result = await table.record(where={"pk": "noenc-1"})
         assert result["secret"] == "plain"
 
     async def test_encrypted_field_decryption_failure(self, pg_db):
@@ -362,7 +362,7 @@ class TestTableEncryption:
         pg_db.parent.encryption.set_key(b"2" * 32)
 
         # Should return encrypted value (not raise)
-        result = await table.select_one(where={"pk": "enc-fail"})
+        result = await table.record(where={"pk": "enc-fail"})
         assert result["secret"].startswith("ENC:")
 
 
@@ -381,11 +381,11 @@ class TestRecordUpdater:
 
         await table.insert({"pk": "rec-1", "name": "Original", "value": 10})
 
-        async with table.record("rec-1") as rec:
+        async with table.record_to_update("rec-1") as rec:
             rec["name"] = "Updated"
             rec["value"] = 20
 
-        result = await table.select_one(where={"pk": "rec-1"})
+        result = await table.record(where={"pk": "rec-1"})
         assert result["name"] == "Updated"
         assert result["value"] == 20
 
@@ -394,12 +394,12 @@ class TestRecordUpdater:
         table = TestTable(pg_db)
         await table.create_schema()
 
-        async with table.record("new-rec", insert_missing=True) as rec:
+        async with table.record_to_update("new-rec", insert_missing=True) as rec:
             rec["name"] = "New Record"
             rec["value"] = 100
 
-        result = await table.select_one(where={"pk": "new-rec"})
-        assert result is not None
+        result = await table.record(where={"pk": "new-rec"})
+        assert result  # non-empty dict
         assert result["name"] == "New Record"
 
     async def test_record_not_found_empty_dict(self, pg_db):
@@ -407,7 +407,7 @@ class TestRecordUpdater:
         table = TestTable(pg_db)
         await table.create_schema()
 
-        async with table.record("not-found") as rec:
+        async with table.record_to_update("not-found") as rec:
             # rec is empty dict
             assert rec == {}
 
@@ -424,10 +424,10 @@ class TestRecordUpdater:
             "name": "Original Account",
         })
 
-        async with accounts.record({"tenant_id": "t1", "id": "acc1"}) as rec:
+        async with accounts.record_to_update({"tenant_id": "t1", "id": "acc1"}) as rec:
             rec["name"] = "Updated Account"
 
-        result = await accounts.select_one(where={"tenant_id": "t1", "id": "acc1"})
+        result = await accounts.record(where={"tenant_id": "t1", "id": "acc1"})
         assert result["name"] == "Updated Account"
 
     async def test_record_without_for_update(self, pg_db):
@@ -437,21 +437,21 @@ class TestRecordUpdater:
 
         await table.insert({"pk": "no-lock", "name": "No Lock", "value": 5})
 
-        async with table.record("no-lock", for_update=False) as rec:
+        async with table.record_to_update("no-lock", for_update=False) as rec:
             rec["name"] = "Updated No Lock"
 
-        result = await table.select_one(where={"pk": "no-lock"})
+        result = await table.record(where={"pk": "no-lock"})
         assert result["name"] == "Updated No Lock"
 
     async def test_record_no_pkey_raises(self, pg_db):
         """record() with scalar pk on table without pkey raises."""
-        await pg_db.adapter.execute(
+        await pg_db.execute(
             "CREATE TABLE IF NOT EXISTS no_pk_items (name TEXT, value INTEGER)"
         )
         table = NoPkTable(pg_db)
 
         with pytest.raises(ValueError, match="has no primary key"):
-            table.record("some-value")
+            table.record_to_update("some-value")
 
     async def test_record_exception_no_save(self, pg_db):
         """Exception in context manager doesn't save changes."""
@@ -461,11 +461,11 @@ class TestRecordUpdater:
         await table.insert({"pk": "exc-1", "name": "Original"})
 
         with pytest.raises(ValueError):
-            async with table.record("exc-1") as rec:
+            async with table.record_to_update("exc-1") as rec:
                 rec["name"] = "Should Not Save"
                 raise ValueError("Test error")
 
-        result = await table.select_one(where={"pk": "exc-1"})
+        result = await table.record(where={"pk": "exc-1"})
         assert result["name"] == "Original"
 
 
@@ -477,8 +477,8 @@ class TestRecordUpdater:
 class TestTableBatchOps:
     """Tests for batch update operations."""
 
-    async def test_update_batch(self, pg_db):
-        """update_batch updates multiple records with triggers."""
+    async def test_batch_update(self, pg_db):
+        """batch_update updates multiple records with triggers."""
         table = TestTable(pg_db)
         await table.create_schema()
 
@@ -501,7 +501,7 @@ class TestTableBatchOps:
         await table.insert({"pk": "batch-3", "name": "Three", "value": 3})
 
         # Batch update
-        count = await table.update_batch(
+        count = await table.batch_update(
             ["batch-1", "batch-2"],
             {"value": 100}
         )
@@ -511,26 +511,26 @@ class TestTableBatchOps:
         assert len([c for c in trigger_calls if c[0] == "updating"]) == 2
         assert len([c for c in trigger_calls if c[0] == "updated"]) == 2
 
-    async def test_update_batch_empty(self, pg_db):
-        """update_batch with empty list returns 0."""
+    async def test_batch_update_empty(self, pg_db):
+        """batch_update with empty list returns 0."""
         table = TestTable(pg_db)
         await table.create_schema()
 
-        count = await table.update_batch([], {"value": 100})
+        count = await table.batch_update([], {"value": 100})
         assert count == 0
 
-    async def test_update_batch_no_pkey_raises(self, pg_db):
-        """update_batch on table without pkey raises."""
-        await pg_db.adapter.execute(
+    async def test_batch_update_no_pkey_raises(self, pg_db):
+        """batch_update on table without pkey raises."""
+        await pg_db.execute(
             "CREATE TABLE IF NOT EXISTS no_pk_items (name TEXT, value INTEGER)"
         )
         table = NoPkTable(pg_db)
 
         with pytest.raises(ValueError, match="has no primary key"):
-            await table.update_batch(["a", "b"], {"value": 1})
+            await table.batch_update(["a", "b"], {"value": 1})
 
-    async def test_update_batch_raw(self, pg_db):
-        """update_batch_raw updates with single query, no triggers."""
+    async def test_batch_update_raw(self, pg_db):
+        """batch_update with raw=True updates with single query, no triggers."""
         table = TestTable(pg_db)
         await table.create_schema()
 
@@ -540,9 +540,10 @@ class TestTableBatchOps:
         await table.insert({"pk": "raw-1", "name": "One", "value": 1})
         await table.insert({"pk": "raw-2", "name": "Two", "value": 2})
 
-        count = await table.update_batch_raw(
+        count = await table.batch_update(
             ["raw-1", "raw-2"],
-            {"value": 999}
+            {"value": 999},
+            raw=True
         )
 
         assert count == 2
@@ -550,36 +551,81 @@ class TestTableBatchOps:
         assert len(trigger_called) == 0
 
         # Values updated
-        r1 = await table.select_one(where={"pk": "raw-1"})
-        r2 = await table.select_one(where={"pk": "raw-2"})
+        r1 = await table.record(where={"pk": "raw-1"})
+        r2 = await table.record(where={"pk": "raw-2"})
         assert r1["value"] == 999
         assert r2["value"] == 999
 
-    async def test_update_batch_raw_empty(self, pg_db):
-        """update_batch_raw with empty list returns 0."""
+    async def test_batch_update_raw_empty(self, pg_db):
+        """batch_update raw with empty list returns 0."""
         table = TestTable(pg_db)
         await table.create_schema()
 
-        count = await table.update_batch_raw([], {"value": 100})
+        count = await table.batch_update([], {"value": 100}, raw=True)
         assert count == 0
 
-    async def test_update_batch_raw_no_updater(self, pg_db):
-        """update_batch_raw with empty updater returns 0."""
+    async def test_batch_update_raw_requires_dict(self, pg_db):
+        """batch_update raw requires dict updater, not callable or None."""
         table = TestTable(pg_db)
         await table.create_schema()
 
-        count = await table.update_batch_raw(["a", "b"], {})
-        assert count == 0
+        with pytest.raises(ValueError, match="raw=True requires updater to be a dict"):
+            await table.batch_update(["a", "b"], None, raw=True)
 
-    async def test_update_batch_raw_no_pkey_raises(self, pg_db):
-        """update_batch_raw on table without pkey raises."""
-        await pg_db.adapter.execute(
+        with pytest.raises(ValueError, match="raw=True requires updater to be a dict"):
+            await table.batch_update(["a", "b"], lambda r: r, raw=True)
+
+    async def test_batch_update_raw_no_pkey_raises(self, pg_db):
+        """batch_update raw on table without pkey raises."""
+        await pg_db.execute(
             "CREATE TABLE IF NOT EXISTS no_pk_items (name TEXT, value INTEGER)"
         )
         table = NoPkTable(pg_db)
 
         with pytest.raises(ValueError, match="has no primary key"):
-            await table.update_batch_raw(["a"], {"value": 1})
+            await table.batch_update(["a"], {"value": 1}, raw=True)
+
+    async def test_batch_update_callable(self, pg_db):
+        """batch_update with callable updater modifies records."""
+        table = TestTable(pg_db)
+        await table.create_schema()
+
+        await table.insert({"pk": "call-1", "name": "One", "value": 10})
+        await table.insert({"pk": "call-2", "name": "Two", "value": 20})
+
+        def increment_value(rec):
+            rec["value"] = rec["value"] + 1
+            rec["name"] = "Updated"
+
+        count = await table.batch_update(["call-1", "call-2"], increment_value)
+
+        assert count == 2
+        r1 = await table.record(where={"pk": "call-1"})
+        r2 = await table.record(where={"pk": "call-2"})
+        assert r1["value"] == 11
+        assert r1["name"] == "Updated"
+        assert r2["value"] == 21
+
+    async def test_batch_update_callable_skip(self, pg_db):
+        """batch_update callable returning False skips record."""
+        table = TestTable(pg_db)
+        await table.create_schema()
+
+        await table.insert({"pk": "skip-1", "name": "One", "value": 10})
+        await table.insert({"pk": "skip-2", "name": "Two", "value": 20})
+
+        def skip_low_value(rec):
+            if rec["value"] < 15:
+                return False  # Skip this record
+            rec["name"] = "High Value"
+
+        count = await table.batch_update(["skip-1", "skip-2"], skip_low_value)
+
+        assert count == 1  # Only one updated
+        r1 = await table.record(where={"pk": "skip-1"})
+        r2 = await table.record(where={"pk": "skip-2"})
+        assert r1["name"] == "One"  # Not updated (skipped)
+        assert r2["name"] == "High Value"  # Updated
 
 
 # =============================================================================
@@ -603,7 +649,7 @@ class TestTableTriggers:
 
         await table.insert({"pk": "trig-ins", "name": "Trigger Test"})
 
-        result = await table.select_one(where={"pk": "trig-ins"})
+        result = await table.record(where={"pk": "trig-ins"})
         assert result["value"] == 42
 
     async def test_trigger_on_inserted(self, pg_db):
@@ -638,7 +684,7 @@ class TestTableTriggers:
 
         await table.update({"name": "Updated"}, {"pk": "trig-upd"})
 
-        result = await table.select_one(where={"pk": "trig-upd"})
+        result = await table.record(where={"pk": "trig-upd"})
         assert result["value"] == 20  # 10 * 2
 
     async def test_trigger_on_deleting(self, pg_db):
@@ -722,7 +768,7 @@ class TestAutoIncrementTable:
     async def test_autoincrement_insert(self, pg_db):
         """Insert generates autoincrement pk."""
         # Create the table manually since it's not in proxy
-        await pg_db.adapter.execute("""
+        await pg_db.execute("""
             CREATE TABLE IF NOT EXISTS auto_items (
                 id SERIAL PRIMARY KEY,
                 name TEXT
@@ -744,3 +790,168 @@ class TestAutoIncrementTable:
         await table.insert(data2)
 
         assert data2["id"] > data["id"]
+
+
+# =============================================================================
+# record() method tests
+# =============================================================================
+
+
+class TestTableRecord:
+    """Tests for Table.record() method."""
+
+    async def test_record_by_pkey(self, pg_db):
+        """record() fetches by primary key."""
+        table = TestTable(pg_db)
+        await table.create_schema()
+
+        await table.insert({"pk": "rec-pk-1", "name": "By PKey", "value": 42})
+
+        result = await table.record("rec-pk-1")
+        assert result["pk"] == "rec-pk-1"
+        assert result["name"] == "By PKey"
+        assert result["value"] == 42
+
+    async def test_record_by_where(self, pg_db):
+        """record() fetches by where conditions."""
+        table = TestTable(pg_db)
+        await table.create_schema()
+
+        await table.insert({"pk": "rec-where-1", "name": "UniqueFind", "value": 99})
+
+        result = await table.record(where={"name": "UniqueFind"})
+        assert result["pk"] == "rec-where-1"
+        assert result["value"] == 99
+
+    async def test_record_not_found_raises(self, pg_db):
+        """record() raises RecordNotFoundError when not found."""
+        from proxy.sql import RecordNotFoundError
+
+        table = TestTable(pg_db)
+        await table.create_schema()
+
+        with pytest.raises(RecordNotFoundError) as exc_info:
+            await table.record("nonexistent-pk")
+
+        assert "nonexistent-pk" in str(exc_info.value)
+        assert exc_info.value.table == "test_items"
+        assert exc_info.value.pkey == "nonexistent-pk"
+
+    async def test_record_not_found_ignore_missing(self, pg_db):
+        """record() returns {} when not found with ignore_missing=True."""
+        table = TestTable(pg_db)
+        await table.create_schema()
+
+        result = await table.record("nonexistent-pk", ignore_missing=True)
+        assert result == {}
+
+    async def test_record_duplicate_raises(self, pg_db):
+        """record() raises RecordDuplicateError when multiple found."""
+        from proxy.sql import RecordDuplicateError
+
+        table = TestTable(pg_db)
+        await table.create_schema()
+
+        # Insert two records with same name
+        await table.insert({"pk": "dup-1", "name": "DupName", "value": 1})
+        await table.insert({"pk": "dup-2", "name": "DupName", "value": 2})
+
+        with pytest.raises(RecordDuplicateError) as exc_info:
+            await table.record(where={"name": "DupName"})
+
+        assert exc_info.value.table == "test_items"
+        assert exc_info.value.count == 2
+
+    async def test_record_duplicate_ignore(self, pg_db):
+        """record() returns first when duplicates found with ignore_duplicate=True."""
+        table = TestTable(pg_db)
+        await table.create_schema()
+
+        await table.insert({"pk": "dup-ign-1", "name": "DupIgnore", "value": 1})
+        await table.insert({"pk": "dup-ign-2", "name": "DupIgnore", "value": 2})
+
+        result = await table.record(where={"name": "DupIgnore"}, ignore_duplicate=True)
+        assert result["name"] == "DupIgnore"
+        # Returns first found (order may vary)
+        assert result["pk"] in ("dup-ign-1", "dup-ign-2")
+
+    async def test_record_for_update(self, pg_db):
+        """record() with for_update=True uses SELECT FOR UPDATE."""
+        table = TestTable(pg_db)
+        await table.create_schema()
+
+        await table.insert({"pk": "for-upd-1", "name": "ForUpdate", "value": 10})
+
+        result = await table.record("for-upd-1", for_update=True)
+        assert result["pk"] == "for-upd-1"
+        assert result["name"] == "ForUpdate"
+
+    async def test_record_with_columns(self, pg_db):
+        """record() respects columns parameter."""
+        table = TestTable(pg_db)
+        await table.create_schema()
+
+        await table.insert({"pk": "cols-1", "name": "Columns", "value": 55})
+
+        result = await table.record("cols-1", columns=["pk", "name"])
+        assert result["pk"] == "cols-1"
+        assert result["name"] == "Columns"
+        assert "value" not in result
+
+    async def test_record_no_args_raises(self, pg_db):
+        """record() raises ValueError if no pkey or where provided."""
+        table = TestTable(pg_db)
+        await table.create_schema()
+
+        with pytest.raises(ValueError, match="requires either pkey or where"):
+            await table.record()
+
+    async def test_record_no_pkey_table_raises(self, pg_db):
+        """record() with pkey on table without pkey raises ValueError."""
+        await pg_db.execute(
+            "CREATE TABLE IF NOT EXISTS no_pk_items (name TEXT, value INTEGER)"
+        )
+        table = NoPkTable(pg_db)
+
+        with pytest.raises(ValueError, match="has no primary key"):
+            await table.record("some-value")
+
+    async def test_record_json_decoded(self, pg_db):
+        """record() decodes JSON fields."""
+        table = TestTable(pg_db)
+        await table.create_schema()
+
+        metadata = {"key": "value", "list": [1, 2, 3]}
+        await table.insert({"pk": "json-rec", "name": "JSON", "metadata": metadata})
+
+        result = await table.record("json-rec")
+        assert result["metadata"] == metadata
+        assert result["metadata"]["list"] == [1, 2, 3]
+
+    async def test_record_encrypted_decrypted(self, pg_db):
+        """record() decrypts encrypted fields."""
+        pg_db.parent.encryption.set_key(b"0" * 32)
+
+        table = TestTable(pg_db)
+        await table.create_schema()
+
+        await table.insert({"pk": "enc-rec", "name": "Encrypted", "secret": "my-secret"})
+
+        result = await table.record("enc-rec")
+        assert result["secret"] == "my-secret"
+
+    async def test_record_raw_skips_decoding(self, pg_db):
+        """record() with raw=True skips JSON/encryption decoding."""
+        pg_db.parent.encryption.set_key(b"0" * 32)
+
+        table = TestTable(pg_db)
+        await table.create_schema()
+
+        metadata = {"key": "value"}
+        await table.insert({"pk": "raw-rec", "name": "Raw", "metadata": metadata, "secret": "secret"})
+
+        result = await table.record("raw-rec", raw=True)
+        # JSON still encoded
+        assert isinstance(result["metadata"], str)
+        # Secret still encrypted
+        assert result["secret"].startswith("ENC:")

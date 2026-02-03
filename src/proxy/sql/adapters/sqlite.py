@@ -1,5 +1,5 @@
 # Copyright 2025 Softwell S.r.l. - SPDX-License-Identifier: Apache-2.0
-"""SQLite async adapter using aiosqlite."""
+"""SQLite async adapter using aiosqlite with per-request connections."""
 
 from __future__ import annotations
 
@@ -14,7 +14,11 @@ if TYPE_CHECKING:
 
 
 class SqliteAdapter(DbAdapter):
-    """SQLite async adapter. Uses :name placeholders natively."""
+    """SQLite async adapter with per-request connections.
+
+    Uses :name placeholders natively. Each acquire() opens a new connection,
+    release() closes it. This ensures request isolation.
+    """
 
     placeholder = ":name"
 
@@ -33,82 +37,71 @@ class SqliteAdapter(DbAdapter):
                     row[key] = bool(value)
         return row
 
-    async def connect(self) -> None:
-        """SQLite connections are opened per-operation, this is a no-op."""
+    async def acquire(self) -> aiosqlite.Connection:
+        """Open new connection for request."""
+        return await aiosqlite.connect(self.db_path)
+
+    async def release(self, conn: aiosqlite.Connection) -> None:
+        """Close connection."""
+        await conn.close()
+
+    async def shutdown(self) -> None:
+        """No-op for SQLite (no pool to close)."""
         pass
 
-    async def close(self) -> None:
-        """SQLite connections are closed per-operation, this is a no-op."""
-        pass
+    async def commit(self, conn: aiosqlite.Connection) -> None:
+        """Commit transaction on connection."""
+        await conn.commit()
 
-    async def execute(self, query: str, params: dict[str, Any] | None = None) -> int:
+    async def rollback(self, conn: aiosqlite.Connection) -> None:
+        """Rollback transaction on connection."""
+        await conn.rollback()
+
+    async def execute(
+        self, conn: aiosqlite.Connection, query: str, params: dict[str, Any] | None = None
+    ) -> int:
         """Execute query, return affected row count."""
-        async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute(query, params or {})
-            await db.commit()
-            return cursor.rowcount
+        cursor = await conn.execute(query, params or {})
+        return cursor.rowcount
+
+    async def execute_many(
+        self, conn: aiosqlite.Connection, query: str, params_list: Sequence[dict[str, Any]]
+    ) -> int:
+        """Execute query multiple times with different params (batch insert)."""
+        await conn.executemany(query, params_list)
+        return len(params_list)
+
+    async def fetch_one(
+        self, conn: aiosqlite.Connection, query: str, params: dict[str, Any] | None = None
+    ) -> dict[str, Any] | None:
+        """Execute query, return single row as dict or None."""
+        async with conn.execute(query, params or {}) as cursor:
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            cols = [c[0] for c in cursor.description]
+            return self._normalize_booleans(dict(zip(cols, row, strict=True)))
+
+    async def fetch_all(
+        self, conn: aiosqlite.Connection, query: str, params: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        """Execute query, return all rows as list of dicts."""
+        async with conn.execute(query, params or {}) as cursor:
+            rows = await cursor.fetchall()
+            cols = [c[0] for c in cursor.description]
+            return [self._normalize_booleans(dict(zip(cols, row, strict=True))) for row in rows]
+
+    async def execute_script(self, conn: aiosqlite.Connection, script: str) -> None:
+        """Execute multiple statements (for schema creation)."""
+        await conn.executescript(script)
 
     async def insert_returning_id(
-        self, table: str, values: dict[str, Any], pk_col: str = "id"
+        self, conn: aiosqlite.Connection, table: str, values: dict[str, Any], pk_col: str = "id"
     ) -> Any:
-        """Insert a row and return the generated primary key (autoincrement).
-
-        Args:
-            table: Table name.
-            values: Column-value pairs.
-            pk_col: Primary key column name (used for RETURNING in PostgreSQL).
-
-        Returns:
-            The generated primary key value (lastrowid for SQLite).
-        """
+        """Insert a row and return the generated primary key (lastrowid)."""
         cols = list(values.keys())
         placeholders = ", ".join(self._placeholder(c) for c in cols)
         col_list = ", ".join(self._sql_name(c) for c in cols)
         query = f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})"
-        async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute(query, values)
-            await db.commit()
-            return cursor.lastrowid
-
-    async def execute_many(self, query: str, params_list: Sequence[dict[str, Any]]) -> int:
-        """Execute query multiple times with different params (batch insert)."""
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.executemany(query, params_list)
-            await db.commit()
-            return len(params_list)
-
-    async def fetch_one(
-        self, query: str, params: dict[str, Any] | None = None
-    ) -> dict[str, Any] | None:
-        """Execute query, return single row as dict or None."""
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(query, params or {}) as cursor:
-                row = await cursor.fetchone()
-                if row is None:
-                    return None
-                cols = [c[0] for c in cursor.description]
-                return self._normalize_booleans(dict(zip(cols, row, strict=True)))
-
-    async def fetch_all(
-        self, query: str, params: dict[str, Any] | None = None
-    ) -> list[dict[str, Any]]:
-        """Execute query, return all rows as list of dicts."""
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(query, params or {}) as cursor:
-                rows = await cursor.fetchall()
-                cols = [c[0] for c in cursor.description]
-                return [self._normalize_booleans(dict(zip(cols, row, strict=True))) for row in rows]
-
-    async def execute_script(self, script: str) -> None:
-        """Execute multiple statements (for schema creation)."""
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.executescript(script)
-            await db.commit()
-
-    async def commit(self) -> None:
-        """Commit is handled per-operation in this implementation."""
-        pass
-
-    async def rollback(self) -> None:
-        """Rollback is handled per-operation in this implementation."""
-        pass
+        cursor = await conn.execute(query, values)
+        return cursor.lastrowid

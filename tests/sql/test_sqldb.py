@@ -94,60 +94,100 @@ class TestSqlDbTableManagement:
             db.table("nonexistent")
 
 
+class TestSqlDbConnection:
+    """Tests for connection context manager."""
+
+    async def test_connection_provides_db(self):
+        """connection() yields the SqlDb instance."""
+        db = SqlDb(":memory:")
+        async with db.connection() as yielded:
+            assert yielded is db
+
+    async def test_connection_enables_queries(self):
+        """Inside connection(), queries can be executed."""
+        db = SqlDb(":memory:")
+        async with db.connection():
+            await db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
+            await db.execute("INSERT INTO test (id, name) VALUES (1, 'Test')")
+            result = await db.fetch_one("SELECT * FROM test WHERE id = 1")
+            assert result["name"] == "Test"
+
+    async def test_connection_commits_on_success(self, tmp_path):
+        """connection() commits on successful exit."""
+        db_path = str(tmp_path / "test.db")
+        db = SqlDb(db_path)
+        async with db.connection():
+            await db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
+            await db.execute("INSERT INTO test (id, name) VALUES (1, 'Test')")
+
+        # In new connection, data should be there
+        async with db.connection():
+            result = await db.fetch_one("SELECT * FROM test WHERE id = 1")
+            assert result is not None
+            assert result["name"] == "Test"
+
+    async def test_connection_rollbacks_on_exception(self, tmp_path):
+        """connection() rollbacks on exception."""
+        db_path = str(tmp_path / "test.db")
+        db = SqlDb(db_path)
+        async with db.connection():
+            await db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
+
+        # Insert and raise - should rollback
+        with pytest.raises(ValueError):
+            async with db.connection():
+                await db.execute("INSERT INTO test (id, name) VALUES (1, 'Test')")
+                raise ValueError("Test error")
+
+        # In new connection, data should NOT be there
+        async with db.connection():
+            result = await db.fetch_one("SELECT * FROM test WHERE id = 1")
+            assert result is None
+
+    async def test_conn_property_raises_outside_connection(self):
+        """conn property raises RuntimeError outside connection context."""
+        db = SqlDb(":memory:")
+        with pytest.raises(RuntimeError, match="No active connection"):
+            _ = db.conn
+
+    async def test_conn_property_works_inside_connection(self):
+        """conn property returns connection inside context."""
+        db = SqlDb(":memory:")
+        async with db.connection():
+            assert db.conn is not None
+
+
 class TestSqlDbAsyncMethods:
-    """Tests for async database methods."""
+    """Tests for async database methods within connection context."""
 
-    async def test_connect_calls_adapter(self):
-        """connect() delegates to adapter."""
+    async def test_execute_works_in_connection(self):
+        """execute() works within connection context."""
         db = SqlDb(":memory:")
-        db.adapter.connect = AsyncMock()
-        await db.connect()
-        db.adapter.connect.assert_called_once()
+        async with db.connection():
+            await db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, val INTEGER)")
+            result = await db.execute("INSERT INTO test (id, val) VALUES (1, 42)")
+            assert result == 1  # rowcount
 
-    async def test_close_calls_adapter(self):
-        """close() delegates to adapter."""
+    async def test_fetch_one_works_in_connection(self):
+        """fetch_one() works within connection context."""
         db = SqlDb(":memory:")
-        db.adapter.close = AsyncMock()
-        await db.close()
-        db.adapter.close.assert_called_once()
+        async with db.connection():
+            await db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, val INTEGER)")
+            await db.execute("INSERT INTO test (id, val) VALUES (1, 42)")
+            result = await db.fetch_one("SELECT * FROM test WHERE id = :id", {"id": 1})
+            assert result == {"id": 1, "val": 42}
 
-    async def test_execute_delegates_to_adapter(self):
-        """execute() delegates to adapter."""
+    async def test_fetch_all_works_in_connection(self):
+        """fetch_all() works within connection context."""
         db = SqlDb(":memory:")
-        db.adapter.execute = AsyncMock(return_value=5)
-        result = await db.execute("UPDATE test SET x=1", {"x": 1})
-        assert result == 5
-        db.adapter.execute.assert_called_once()
-
-    async def test_fetch_one_delegates_to_adapter(self):
-        """fetch_one() delegates to adapter."""
-        db = SqlDb(":memory:")
-        db.adapter.fetch_one = AsyncMock(return_value={"id": 1})
-        result = await db.fetch_one("SELECT * FROM test WHERE id=:id", {"id": 1})
-        assert result == {"id": 1}
-        db.adapter.fetch_one.assert_called_once()
-
-    async def test_fetch_all_delegates_to_adapter(self):
-        """fetch_all() delegates to adapter."""
-        db = SqlDb(":memory:")
-        db.adapter.fetch_all = AsyncMock(return_value=[{"id": 1}, {"id": 2}])
-        result = await db.fetch_all("SELECT * FROM test")
-        assert result == [{"id": 1}, {"id": 2}]
-        db.adapter.fetch_all.assert_called_once()
-
-    async def test_commit_delegates_to_adapter(self):
-        """commit() delegates to adapter."""
-        db = SqlDb(":memory:")
-        db.adapter.commit = AsyncMock()
-        await db.commit()
-        db.adapter.commit.assert_called_once()
-
-    async def test_rollback_delegates_to_adapter(self):
-        """rollback() delegates to adapter."""
-        db = SqlDb(":memory:")
-        db.adapter.rollback = AsyncMock()
-        await db.rollback()
-        db.adapter.rollback.assert_called_once()
+        async with db.connection():
+            await db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, val INTEGER)")
+            await db.execute("INSERT INTO test (id, val) VALUES (1, 10)")
+            await db.execute("INSERT INTO test (id, val) VALUES (2, 20)")
+            results = await db.fetch_all("SELECT * FROM test ORDER BY id")
+            assert len(results) == 2
+            assert results[0]["val"] == 10
+            assert results[1]["val"] == 20
 
 
 class TestSqlDbCheckStructure:
@@ -161,7 +201,8 @@ class TestSqlDbCheckStructure:
         # Mock the table's create_schema
         db.tables["dummy"].create_schema = AsyncMock()
 
-        await db.check_structure()
+        async with db.connection():
+            await db.check_structure()
 
         db.tables["dummy"].create_schema.assert_called_once()
 

@@ -1,42 +1,63 @@
 # Copyright 2025 Softwell S.r.l. - SPDX-License-Identifier: Apache-2.0
-"""Async database manager with adapter pattern and table registration."""
+"""Async database manager with adapter pattern, contextvars for connection isolation."""
 
 from __future__ import annotations
 
 import importlib
 import pkgutil
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 from .adapters import DbAdapter, get_adapter
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Sequence
+
     from .table import Table
+
+# Connection context variable - each async task gets its own connection
+_current_conn: ContextVar[Any] = ContextVar("db_conn", default=None)
 
 
 class SqlDb:
-    """Async database manager with adapter pattern.
+    """Async database manager with per-request connection isolation.
+
+    Uses contextvars to provide each request/task with its own database connection,
+    ensuring proper transaction isolation in concurrent environments.
 
     Supports multiple database types via adapters:
     - SQLite: "/path/to/db.sqlite" or "sqlite:/path/to/db"
     - PostgreSQL: "postgresql://user:pass@host/db"
 
     Features:
+    - Per-request connection via contextvars (no shared state)
     - Table class registration via add_table() or discover()
     - Table access via table(name)
     - Schema creation and verification
-    - CRUD operations via adapter
     - Encryption key access via parent.encryption_key
+
+    Connection model:
+    - connection(): Context manager that acquires connection, commits/rollbacks, releases
+    - conn property: Returns current context's connection (raises if none active)
+    - shutdown(): Closes pool (application shutdown only)
 
     Usage:
         db = SqlDb("/data/service.db", parent=proxy)
-        await db.connect()
 
-        db.discover("proxy.entities")
-        await db.check_structure()
+        # For schema setup
+        async with db.connection():
+            db.discover("proxy.entities")
+            await db.check_structure()
 
-        tenant = await db.table('tenants').select_one(where={"id": "acme"})
+        # For transactions (automatic commit/rollback)
+        async with db.connection():
+            tenant = await db.table('tenants').record(where={"id": "acme"})
+            await db.table('tenants').update({"active": False}, where={"id": "acme"})
+        # COMMIT on success, ROLLBACK on exception
 
-        await db.close()
+        # Application shutdown
+        await db.shutdown()
     """
 
     def __init__(self, connection_string: str, parent: Any = None):
@@ -58,17 +79,57 @@ class SqlDb:
             return None
         return getattr(self.parent, "encryption_key", None)
 
+    @property
+    def conn(self) -> Any:
+        """Get current connection from context.
+
+        Returns:
+            Active database connection for this context.
+
+        Raises:
+            RuntimeError: If no connection is active (not inside connection() context).
+        """
+        c = _current_conn.get()
+        if c is None:
+            raise RuntimeError("No active connection. Use 'async with db.connection():'")
+        return c
+
     # -------------------------------------------------------------------------
     # Connection management
     # -------------------------------------------------------------------------
 
-    async def connect(self) -> None:
-        """Connect to database."""
-        await self.adapter.connect()
+    @asynccontextmanager
+    async def connection(self) -> AsyncIterator[SqlDb]:
+        """Context manager for per-request connection with transaction.
 
-    async def close(self) -> None:
-        """Close database connection."""
-        await self.adapter.close()
+        Acquires a connection from the adapter, sets it in contextvars,
+        and handles commit/rollback on exit.
+
+        Usage:
+            async with db.connection():
+                await db.table('items').insert({"id": "1", "name": "Test"})
+                await db.table('items').update({"name": "Updated"}, where={"id": "1"})
+            # COMMIT automatic
+
+            async with db.connection():
+                await db.table('items').insert({"id": "2", "name": "Test"})
+                raise ValueError("Ops")  # ROLLBACK automatic
+        """
+        conn = await self.adapter.acquire()
+        token = _current_conn.set(conn)
+        try:
+            yield self
+            await self.adapter.commit(conn)
+        except Exception:
+            await self.adapter.rollback(conn)
+            raise
+        finally:
+            _current_conn.reset(token)
+            await self.adapter.release(conn)
+
+    async def shutdown(self) -> None:
+        """Close connection pool (application shutdown)."""
+        await self.adapter.shutdown()
 
     # -------------------------------------------------------------------------
     # Table management
@@ -138,32 +199,140 @@ class SqlDb:
             await table.create_schema()
 
     # -------------------------------------------------------------------------
-    # Direct adapter access
+    # Direct query access (uses current connection from context)
     # -------------------------------------------------------------------------
 
     async def execute(self, query: str, params: dict[str, Any] | None = None) -> int:
         """Execute raw query, return affected row count."""
-        return await self.adapter.execute(query, params)
+        return await self.adapter.execute(self.conn, query, params)
+
+    async def execute_many(self, query: str, params_list: Sequence[dict[str, Any]]) -> int:
+        """Execute query multiple times with different params (batch insert)."""
+        return await self.adapter.execute_many(self.conn, query, params_list)
 
     async def fetch_one(
         self, query: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
         """Execute raw query, return single row."""
-        return await self.adapter.fetch_one(query, params)
+        return await self.adapter.fetch_one(self.conn, query, params)
 
     async def fetch_all(
         self, query: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
         """Execute raw query, return all rows."""
-        return await self.adapter.fetch_all(query, params)
+        return await self.adapter.fetch_all(self.conn, query, params)
+
+    async def execute_script(self, script: str) -> None:
+        """Execute multiple statements (for schema creation)."""
+        await self.adapter.execute_script(self.conn, script)
 
     async def commit(self) -> None:
-        """Commit transaction."""
-        await self.adapter.commit()
+        """Commit current transaction."""
+        await self.adapter.commit(self.conn)
 
     async def rollback(self) -> None:
-        """Rollback transaction."""
-        await self.adapter.rollback()
+        """Rollback current transaction."""
+        await self.adapter.rollback(self.conn)
+
+    # -------------------------------------------------------------------------
+    # CRUD helpers (use current connection from context)
+    # -------------------------------------------------------------------------
+
+    def _sql_name(self, name: str) -> str:
+        """Return quoted SQL identifier."""
+        return self.adapter._sql_name(name)
+
+    def _placeholder(self, name: str) -> str:
+        """Return placeholder for named parameter."""
+        return self.adapter._placeholder(name)
+
+    async def insert(self, table: str, values: dict[str, Any]) -> int:
+        """Insert a row, return rowcount."""
+        cols = list(values.keys())
+        placeholders = ", ".join(self._placeholder(c) for c in cols)
+        col_list = ", ".join(self._sql_name(c) for c in cols)
+        query = f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})"
+        return await self.execute(query, values)
+
+    async def insert_returning_id(
+        self, table: str, values: dict[str, Any], pk_col: str = "id"
+    ) -> Any:
+        """Insert a row and return the generated primary key."""
+        return await self.adapter.insert_returning_id(self.conn, table, values, pk_col)
+
+    async def select(
+        self,
+        table: str,
+        columns: list[str] | None = None,
+        where: dict[str, Any] | None = None,
+        order_by: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Select rows, return list of dicts."""
+        cols_sql = ", ".join(self._sql_name(c) for c in columns) if columns else "*"
+        query = f"SELECT {cols_sql} FROM {table}"
+
+        params: dict[str, Any] = {}
+        if where:
+            conditions = [f"{self._sql_name(k)} = {self._placeholder(k)}" for k in where]
+            query += " WHERE " + " AND ".join(conditions)
+            params.update(where)
+
+        if order_by:
+            query += f" ORDER BY {order_by}"
+
+        if limit:
+            query += f" LIMIT {limit}"
+
+        return await self.fetch_all(query, params)
+
+    async def select_one(
+        self,
+        table: str,
+        columns: list[str] | None = None,
+        where: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Select single row, return dict or None."""
+        results = await self.select(table, columns, where, limit=1)
+        return results[0] if results else None
+
+    async def update(self, table: str, values: dict[str, Any], where: dict[str, Any]) -> int:
+        """Update rows, return rowcount."""
+        set_parts = [f"{self._sql_name(k)} = {self._placeholder('val_' + k)}" for k in values]
+        where_parts = [f"{self._sql_name(k)} = {self._placeholder('whr_' + k)}" for k in where]
+
+        query = f"UPDATE {table} SET {', '.join(set_parts)} WHERE {' AND '.join(where_parts)}"
+
+        params = {f"val_{k}": v for k, v in values.items()}
+        params.update({f"whr_{k}": v for k, v in where.items()})
+
+        return await self.execute(query, params)
+
+    async def delete(self, table: str, where: dict[str, Any]) -> int:
+        """Delete rows, return rowcount."""
+        where_parts = [f"{self._sql_name(k)} = {self._placeholder(k)}" for k in where]
+        query = f"DELETE FROM {table} WHERE {' AND '.join(where_parts)}"
+        return await self.execute(query, where)
+
+    async def exists(self, table: str, where: dict[str, Any]) -> bool:
+        """Check if row exists."""
+        conditions = [f"{self._sql_name(k)} = {self._placeholder(k)}" for k in where]
+        query = f"SELECT 1 FROM {table} WHERE {' AND '.join(conditions)} LIMIT 1"
+        result = await self.fetch_one(query, where)
+        return result is not None
+
+    async def count(self, table: str, where: dict[str, Any] | None = None) -> int:
+        """Count rows in table."""
+        query = f"SELECT COUNT(*) as cnt FROM {table}"
+        params: dict[str, Any] = {}
+
+        if where:
+            conditions = [f"{self._sql_name(k)} = {self._placeholder(k)}" for k in where]
+            query += " WHERE " + " AND ".join(conditions)
+            params.update(where)
+
+        result = await self.fetch_one(query, params)
+        return result["cnt"] if result else 0
 
     # -------------------------------------------------------------------------
     # Private helpers

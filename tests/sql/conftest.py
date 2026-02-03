@@ -5,6 +5,12 @@ PostgreSQL fixtures connect to a container running on port 5433.
 Start the container with: docker compose up -d
 
 Connection: postgresql://proxy:testpassword@localhost:5433/proxy
+
+Connection model:
+- Each fixture opens a connection via `async with db.connection()`
+- The connection stays open for the entire test
+- Tests can use db methods directly (execute, fetch_one, etc.)
+- Cleanup happens in a separate connection context
 """
 
 from __future__ import annotations
@@ -61,13 +67,17 @@ def pg_url() -> str:
 
 @pytest_asyncio.fixture
 async def sqlite_db() -> AsyncGenerator[SqlDb, None]:
-    """Create a SQLite database for testing."""
+    """Create a SQLite database for testing.
+
+    Opens a connection that stays active for the entire test.
+    Tests can use db.execute(), db.fetch_one(), etc. directly.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = os.path.join(tmpdir, "test.db")
         db = SqlDb(db_path)
-        await db.connect()
-        yield db
-        await db.close()
+        async with db.connection():
+            yield db
+        await db.shutdown()
 
 
 @pytest_asyncio.fixture
@@ -76,10 +86,10 @@ async def pg_db(pg_url: str) -> AsyncGenerator[SqlDb, None]:
 
     Creates a fresh test schema for each test run to ensure isolation.
     Drops all tables before and after each test.
+    Opens a connection that stays active for the entire test.
     """
     # Create proxy to get database with proper configuration
     proxy = ProxyBase(ProxyConfigBase(db_path=pg_url))
-    await proxy.db.connect()
 
     # Tables that may be created by tests
     test_tables = [
@@ -93,25 +103,30 @@ async def pg_db(pg_url: str) -> AsyncGenerator[SqlDb, None]:
         "instance",
     ]
 
-    # Drop all tables first to ensure clean state (CASCADE handles FK order)
-    for table_name in test_tables:
-        with contextlib.suppress(Exception):
-            await proxy.db.execute(f'DROP TABLE IF EXISTS "{table_name}" CASCADE')
+    # Setup: drop tables and create schema
+    async with proxy.db.connection():
+        # Drop all tables first to ensure clean state (CASCADE handles FK order)
+        for table_name in test_tables:
+            with contextlib.suppress(Exception):
+                await proxy.db.execute(f'DROP TABLE IF EXISTS "{table_name}" CASCADE')
 
-    # Create base tables in FK dependency order
-    table_order = ["instance", "command_log", "tenants", "accounts", "storages"]
-    for table_name in table_order:
-        if table_name in proxy.db.tables:
-            await proxy.db.tables[table_name].create_schema()
+        # Create base tables in FK dependency order
+        table_order = ["instance", "command_log", "tenants", "accounts", "storages"]
+        for table_name in table_order:
+            if table_name in proxy.db.tables:
+                await proxy.db.tables[table_name].create_schema()
 
-    yield proxy.db
+    # Test execution: open connection for the test
+    async with proxy.db.connection():
+        yield proxy.db
 
-    # Cleanup: drop all tables
-    for table_name in test_tables:
-        with contextlib.suppress(Exception):
-            await proxy.db.execute(f'DROP TABLE IF EXISTS "{table_name}" CASCADE')
+    # Cleanup: drop all tables in new connection
+    async with proxy.db.connection():
+        for table_name in test_tables:
+            with contextlib.suppress(Exception):
+                await proxy.db.execute(f'DROP TABLE IF EXISTS "{table_name}" CASCADE')
 
-    await proxy.close()
+    await proxy.shutdown()
 
 
 @pytest_asyncio.fixture
@@ -119,10 +134,10 @@ async def pg_proxy(pg_url: str) -> AsyncGenerator[ProxyBase, None]:
     """Create a full ProxyBase instance with PostgreSQL backend.
 
     Useful for testing complete workflows with the proxy.
+    Opens a connection that stays active for the entire test.
     """
     config = ProxyConfigBase(db_path=pg_url, test_mode=True, start_active=False)
     proxy = ProxyBase(config)
-    await proxy.db.connect()
 
     # Tables that may be created by tests
     test_tables = [
@@ -136,22 +151,27 @@ async def pg_proxy(pg_url: str) -> AsyncGenerator[ProxyBase, None]:
         "instance",
     ]
 
-    # Drop all tables first
-    for table_name in test_tables:
-        with contextlib.suppress(Exception):
-            await proxy.db.execute(f'DROP TABLE IF EXISTS "{table_name}" CASCADE')
+    # Setup: drop tables and create schema
+    async with proxy.db.connection():
+        # Drop all tables first
+        for table_name in test_tables:
+            with contextlib.suppress(Exception):
+                await proxy.db.execute(f'DROP TABLE IF EXISTS "{table_name}" CASCADE')
 
-    # Create tables in FK dependency order
-    table_order = ["instance", "command_log", "tenants", "accounts", "storages"]
-    for table_name in table_order:
-        if table_name in proxy.db.tables:
-            await proxy.db.tables[table_name].create_schema()
+        # Create tables in FK dependency order
+        table_order = ["instance", "command_log", "tenants", "accounts", "storages"]
+        for table_name in table_order:
+            if table_name in proxy.db.tables:
+                await proxy.db.tables[table_name].create_schema()
 
-    yield proxy
+    # Test execution: open connection for the test
+    async with proxy.db.connection():
+        yield proxy
 
-    # Cleanup
-    for table_name in test_tables:
-        with contextlib.suppress(Exception):
-            await proxy.db.execute(f'DROP TABLE IF EXISTS "{table_name}" CASCADE')
+    # Cleanup: drop all tables
+    async with proxy.db.connection():
+        for table_name in test_tables:
+            with contextlib.suppress(Exception):
+                await proxy.db.execute(f'DROP TABLE IF EXISTS "{table_name}" CASCADE')
 
-    await proxy.close()
+    await proxy.shutdown()

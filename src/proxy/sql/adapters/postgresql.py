@@ -1,5 +1,9 @@
 # Copyright 2025 Softwell S.r.l. - SPDX-License-Identifier: Apache-2.0
-"""PostgreSQL async adapter using psycopg3 with connection pooling."""
+"""PostgreSQL async adapter using psycopg3 with connection pooling.
+
+Uses connection-per-request model: acquire() gets from pool,
+release() returns to pool. Each request gets isolated transaction.
+"""
 
 from __future__ import annotations
 
@@ -13,9 +17,12 @@ if TYPE_CHECKING:
 
 
 class PostgresAdapter(DbAdapter):
-    """PostgreSQL async adapter using psycopg3 with connection pooling.
+    """PostgreSQL async adapter with connection pooling.
 
-    Converts :name placeholders to %(name)s for psycopg compatibility.
+    Uses :name placeholders converted to %(name)s. acquire() gets connection
+    from pool, release() returns it. Each connection is isolated.
+
+    Pool is initialized lazily on first acquire().
     """
 
     placeholder = "%(name)s"
@@ -40,27 +47,18 @@ class PostgresAdapter(DbAdapter):
             ) from e
 
     def _convert_placeholders(self, query: str) -> str:
-        """Convert :name placeholders to %(name)s for psycopg.
-
-        Uses negative lookbehind to preserve PostgreSQL :: cast operators.
-        """
+        """Convert :name placeholders to %(name)s for psycopg."""
         return re.sub(r"(?<!:):([a-zA-Z_][a-zA-Z0-9_]*)", r"%(\1)s", query)
 
-    async def connect(self) -> None:
-        """Establish connection pool with timeout.
+    async def _ensure_pool(self) -> None:
+        """Initialize connection pool if not already open."""
+        if self._pool is not None:
+            return
 
-        Sets search_path to 'public' schema to ensure tables are created
-        in a valid schema even when the connection default is unset.
-
-        Raises:
-            TimeoutError: If connection cannot be established within timeout.
-            Exception: If authentication or other connection error occurs.
-        """
         import asyncio
 
         from psycopg_pool import AsyncConnectionPool
 
-        # Configure connection to use 'public' schema by default
         async def configure(conn):
             await conn.execute("SET search_path TO public")
             await conn.commit()
@@ -73,7 +71,6 @@ class PostgresAdapter(DbAdapter):
             configure=configure,
         )
         try:
-            # Open pool and verify connection works (check=True)
             await asyncio.wait_for(
                 self._pool.open(wait=True, timeout=self.connect_timeout),
                 timeout=self.connect_timeout + 1,
@@ -90,33 +87,77 @@ class PostgresAdapter(DbAdapter):
             self._pool = None
             raise ConnectionError(f"PostgreSQL connection failed: {e}") from e
 
-    async def close(self) -> None:
-        """Close connection pool."""
+    async def acquire(self) -> Any:
+        """Acquire connection from pool."""
+        await self._ensure_pool()
+        return await self._pool.getconn()
+
+    async def release(self, conn: Any) -> None:
+        """Return connection to pool."""
+        if self._pool:
+            await self._pool.putconn(conn)
+
+    async def shutdown(self) -> None:
+        """Close connection pool (application shutdown)."""
         if self._pool:
             await self._pool.close()
             self._pool = None
 
-    async def execute(self, query: str, params: dict[str, Any] | None = None) -> int:
+    async def commit(self, conn: Any) -> None:
+        """Commit transaction on connection."""
+        await conn.commit()
+
+    async def rollback(self, conn: Any) -> None:
+        """Rollback transaction on connection."""
+        await conn.rollback()
+
+    async def execute(self, conn: Any, query: str, params: dict[str, Any] | None = None) -> int:
         """Execute query, return affected row count."""
         query = self._convert_placeholders(query)
-        async with self._pool.connection() as conn, conn.cursor() as cur:
+        async with conn.cursor() as cur:
             await cur.execute(query, params or {})
-            await conn.commit()
             return cur.rowcount
 
+    async def execute_many(
+        self, conn: Any, query: str, params_list: Sequence[dict[str, Any]]
+    ) -> int:
+        """Execute query multiple times with different params (batch insert)."""
+        query = self._convert_placeholders(query)
+        async with conn.cursor() as cur:
+            await cur.executemany(query, params_list)
+            return len(params_list)
+
+    async def fetch_one(
+        self, conn: Any, query: str, params: dict[str, Any] | None = None
+    ) -> dict[str, Any] | None:
+        """Execute query, return single row as dict or None."""
+        from psycopg.rows import dict_row
+
+        query = self._convert_placeholders(query)
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(query, params or {})
+            return await cur.fetchone()
+
+    async def fetch_all(
+        self, conn: Any, query: str, params: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        """Execute query, return all rows as list of dicts."""
+        from psycopg.rows import dict_row
+
+        query = self._convert_placeholders(query)
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(query, params or {})
+            return await cur.fetchall()
+
+    async def execute_script(self, conn: Any, script: str) -> None:
+        """Execute multiple statements (for schema creation)."""
+        async with conn.cursor() as cur:
+            await cur.execute(script)
+
     async def insert_returning_id(
-        self, table: str, values: dict[str, Any], pk_col: str = "id"
+        self, conn: Any, table: str, values: dict[str, Any], pk_col: str = "id"
     ) -> Any:
-        """Insert a row and return the generated primary key (RETURNING).
-
-        Args:
-            table: Table name.
-            values: Column-value pairs.
-            pk_col: Primary key column name for RETURNING clause.
-
-        Returns:
-            The generated primary key value.
-        """
+        """Insert a row and return the generated primary key (RETURNING)."""
         from psycopg.rows import dict_row
 
         cols = list(values.keys())
@@ -124,64 +165,11 @@ class PostgresAdapter(DbAdapter):
         col_list = ", ".join(self._sql_name(c) for c in cols)
         query = f'INSERT INTO {table} ({col_list}) VALUES ({placeholders}) RETURNING "{pk_col}"'
         query = self._convert_placeholders(query)
-        async with self._pool.connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(query, values)
-                await conn.commit()
-                row = await cur.fetchone()
-                return row[pk_col] if row else None
-
-    async def execute_many(self, query: str, params_list: Sequence[dict[str, Any]]) -> int:
-        """Execute query multiple times with different params (batch insert)."""
-        query = self._convert_placeholders(query)
-        async with self._pool.connection() as conn, conn.cursor() as cur:
-            await cur.executemany(query, params_list)
-            await conn.commit()
-            return len(params_list)
-
-    async def fetch_one(
-        self, query: str, params: dict[str, Any] | None = None
-    ) -> dict[str, Any] | None:
-        """Execute query, return single row as dict or None."""
-        from psycopg.rows import dict_row
-
-        query = self._convert_placeholders(query)
-        async with self._pool.connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(query, params or {})
-                return await cur.fetchone()
-
-    async def fetch_all(
-        self, query: str, params: dict[str, Any] | None = None
-    ) -> list[dict[str, Any]]:
-        """Execute query, return all rows as list of dicts."""
-        from psycopg.rows import dict_row
-
-        query = self._convert_placeholders(query)
-        async with self._pool.connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(query, params or {})
-                return await cur.fetchall()
-
-    async def execute_script(self, script: str) -> None:
-        """Execute multiple statements (for schema creation)."""
-        async with self._pool.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(script)
-            await conn.commit()
-
-    def _sql_name(self, name: str) -> str:
-        """Quote identifier for PostgreSQL (handles reserved words like 'user')."""
-        return f'"{name}"'
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(query, values)
+            row = await cur.fetchone()
+            return row[pk_col] if row else None
 
     def for_update_clause(self) -> str:
         """Return FOR UPDATE clause for row locking."""
         return " FOR UPDATE"
-
-    async def commit(self) -> None:
-        """Commit is handled per-operation with connection pooling."""
-        pass
-
-    async def rollback(self) -> None:
-        """Rollback is handled per-operation with connection pooling."""
-        pass

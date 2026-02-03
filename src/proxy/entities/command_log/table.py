@@ -123,7 +123,7 @@ class CommandLogTable(Table):
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
-        rows = await self.db.adapter.fetch_all(
+        rows = await self.db.fetch_all(
             f"""
             SELECT id, command_ts, endpoint, tenant_id, payload, response_status, response_body
             FROM command_log
@@ -152,7 +152,7 @@ class CommandLogTable(Table):
 
     async def get_command(self, command_id: int) -> dict[str, Any] | None:
         """Retrieve a single command log entry by ID."""
-        row = await self.db.adapter.fetch_one(
+        row = await self.db.fetch_one(
             """
             SELECT id, command_ts, endpoint, tenant_id, payload, response_status, response_body
             FROM command_log
@@ -214,7 +214,7 @@ class CommandLogTable(Table):
         Returns:
             Number of deleted records.
         """
-        row = await self.db.adapter.fetch_one(
+        row = await self.db.fetch_one(
             "SELECT COUNT(*) as cnt FROM command_log WHERE command_ts < :threshold_ts",
             {"threshold_ts": threshold_ts},
         )

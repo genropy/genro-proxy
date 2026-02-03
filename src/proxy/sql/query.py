@@ -303,7 +303,7 @@ class Query:
         if self.for_update:
             sql += self.table.db.adapter.for_update_clause()
 
-        rows = await self.table.db.adapter.fetch_all(sql, params)
+        rows = await self.table.db.fetch_all(sql, params)
         return [
             self.table._decrypt_fields(self.table._decode_json_fields(row))
             for row in rows
@@ -315,7 +315,7 @@ class Query:
         if where_sql:
             sql += f" WHERE {where_sql}"
 
-        row = await self.table.db.adapter.fetch_one(sql, params)
+        row = await self.table.db.fetch_one(sql, params)
         return row['cnt'] if row else 0
 
     async def delete(self, raw: bool = False) -> int:
@@ -356,7 +356,7 @@ class Query:
         if where_sql:
             sql += f" WHERE {where_sql}"
 
-        return await self.table.db.adapter.execute(sql, params)
+        return await self.table.db.execute(sql, params)
 
     async def _execute_delete_with_triggers(
         self, where_sql: str, params: dict[str, Any]
@@ -375,7 +375,7 @@ class Query:
             if self.table.pkey:
                 pk_value = record.get(self.table.pkey)
                 if pk_value is not None:
-                    result = await self.table.db.adapter.delete(
+                    result = await self.table.db.delete(
                         self.table.name, {self.table.pkey: pk_value}
                     )
                     if result > 0:
@@ -383,7 +383,7 @@ class Query:
                         deleted += 1
             else:
                 # No primary key - delete by all columns (risky, but fallback)
-                result = await self.table.db.adapter.delete(self.table.name, record)
+                result = await self.table.db.delete(self.table.name, record)
                 if result > 0:
                     await self.table.trigger_on_deleted(record)
                     deleted += 1
@@ -441,7 +441,7 @@ class Query:
         if where_sql:
             sql += f" WHERE {where_sql}"
 
-        return await adapter.execute(sql, update_params)
+        return await self.table.db.execute(sql, update_params)
 
     async def _execute_update_with_triggers(
         self, where_sql: str, params: dict[str, Any], values: dict[str, Any]
@@ -466,7 +466,7 @@ class Query:
             if self.table.pkey:
                 pk_value = old_record.get(self.table.pkey)
                 if pk_value is not None:
-                    result = await self.table.db.adapter.update(
+                    result = await self.table.db.update(
                         self.table.name, encoded, {self.table.pkey: pk_value}
                     )
                     if result > 0:
@@ -474,7 +474,7 @@ class Query:
                         updated += 1
             else:
                 # No primary key - update by all old columns (risky, but fallback)
-                result = await self.table.db.adapter.update(
+                result = await self.table.db.update(
                     self.table.name, encoded, old_record
                 )
                 if result > 0:
