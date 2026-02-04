@@ -18,9 +18,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, status
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
+from genro_tytx import to_tytx
 from pydantic import ValidationError
 
 if TYPE_CHECKING:
@@ -155,7 +156,7 @@ def _add_post_route(
 ) -> None:
     """Add POST route that reads params from JSON body."""
 
-    async def route_handler(request: Request) -> JSONResponse:
+    async def route_handler(request: Request) -> Response:
         try:
             body = await request.json() if await request.body() else {}
         except Exception:
@@ -169,17 +170,32 @@ def _add_post_route(
                 api_token=getattr(request.state, "api_token", None),
                 is_admin=getattr(request.state, "is_admin", False),
             )
-            return JSONResponse(content={"data": result})
+            return Response(
+                content=to_tytx({"data": result}),
+                media_type="application/json",
+            )
         except HTTPException:
             raise
         except InvalidTokenError as e:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(e))
         except ValidationError as e:
-            return JSONResponse(status_code=422, content={"error": e.errors()})
+            return Response(
+                content=to_tytx({"error": e.errors()}),
+                status_code=422,
+                media_type="application/json",
+            )
         except ValueError as e:
-            return JSONResponse(status_code=404, content={"error": str(e)})
+            return Response(
+                content=to_tytx({"error": str(e)}),
+                status_code=404,
+                media_type="application/json",
+            )
         except Exception as e:
-            return JSONResponse(status_code=500, content={"error": str(e)})
+            return Response(
+                content=to_tytx({"error": str(e)}),
+                status_code=500,
+                media_type="application/json",
+            )
 
     route_handler.__doc__ = method.__doc__
     router.add_api_route(path, route_handler, methods=["POST"])
@@ -194,7 +210,7 @@ def _add_get_route(
 ) -> None:
     """Add GET route that reads params from query string."""
 
-    async def route_handler(request: Request) -> JSONResponse:
+    async def route_handler(request: Request) -> Response:
         params = dict(request.query_params)
 
         try:
@@ -205,17 +221,32 @@ def _add_get_route(
                 api_token=getattr(request.state, "api_token", None),
                 is_admin=getattr(request.state, "is_admin", False),
             )
-            return JSONResponse(content={"data": result})
+            return Response(
+                content=to_tytx({"data": result}),
+                media_type="application/json",
+            )
         except HTTPException:
             raise
         except InvalidTokenError as e:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(e))
         except ValidationError as e:
-            return JSONResponse(status_code=422, content={"error": e.errors()})
+            return Response(
+                content=to_tytx({"error": e.errors()}),
+                status_code=422,
+                media_type="application/json",
+            )
         except ValueError as e:
-            return JSONResponse(status_code=404, content={"error": str(e)})
+            return Response(
+                content=to_tytx({"error": str(e)}),
+                status_code=404,
+                media_type="application/json",
+            )
         except Exception as e:
-            return JSONResponse(status_code=500, content={"error": str(e)})
+            return Response(
+                content=to_tytx({"error": str(e)}),
+                status_code=500,
+                media_type="application/json",
+            )
 
     route_handler.__doc__ = method.__doc__
     router.add_api_route(path, route_handler, methods=["GET"])
