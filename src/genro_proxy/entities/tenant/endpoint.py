@@ -167,5 +167,34 @@ class TenantEndpoint(BaseEndpoint):
 
         return await self.get(tenant_id)
 
+    @POST
+    async def create_api_key(
+        self,
+        tenant_id: str,
+        expires_at: int | None = None,
+    ) -> dict:
+        """Create a new API key for a tenant.
+
+        Generates a new random API key, replacing any existing key.
+        The raw key is returned once and cannot be retrieved later.
+
+        Args:
+            tenant_id: The tenant ID.
+            expires_at: Optional Unix timestamp for key expiration.
+
+        Returns:
+            Dict with ok=True and api_key (show once).
+
+        Raises:
+            ValueError: If tenant does not exist.
+        """
+        api_key = await self.table.create_api_key(tenant_id, expires_at)
+        return {
+            "ok": True,
+            "tenant_id": tenant_id,
+            "api_key": api_key,
+            "message": "Save this API key - it will not be shown again.",
+        }
+
 
 __all__ = ["TenantEndpoint"]

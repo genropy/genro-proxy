@@ -51,7 +51,9 @@ class TenantsTable(Table):
                 rec["name"] = "Default Tenant"
                 rec["active"] = 1
 
-    async def create_api_key(self, tenant_id: str, expires_at: int | None = None) -> str:
+    async def create_api_key(
+        self, tenant_id: str, expires_at: int | None = None
+    ) -> str:
         """Generate and store a new API key for a tenant.
 
         Args:
@@ -60,7 +62,13 @@ class TenantsTable(Table):
 
         Returns:
             The generated API key (only returned once, store securely).
+
+        Raises:
+            ValueError: If tenant does not exist.
         """
+        # Verify tenant exists (raises ValueError if not found)
+        await self.record(pkey=tenant_id)
+
         api_key = secrets.token_urlsafe(32)
         key_hash = hashlib.sha256(api_key.encode()).hexdigest()
 

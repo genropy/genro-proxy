@@ -179,6 +179,80 @@ class TestCliContextListInstances:
         assert instances == ["instance1"]
 
 
+class TestCliContextRequireContext:
+    """Tests for require_context method."""
+
+    def test_require_context_returns_resolved(self, tmp_path, monkeypatch):
+        """require_context returns resolved instance and tenant."""
+        ctx = CliContext(base_dir=tmp_path, db_name="proxy.db")
+        monkeypatch.setenv("GPROXY_INSTANCE", "my_instance")
+        monkeypatch.setenv("GPROXY_TENANT", "my_tenant")
+
+        instance, tenant = ctx.require_context()
+
+        assert instance == "my_instance"
+        assert tenant == "my_tenant"
+
+    def test_require_context_exits_no_instances(self, tmp_path, monkeypatch):
+        """require_context exits with error if no instances configured."""
+        messages = []
+        ctx = CliContext(base_dir=tmp_path, db_name="proxy.db", print_func=messages.append)
+        monkeypatch.delenv("GPROXY_INSTANCE", raising=False)
+        monkeypatch.delenv("GPROXY_TENANT", raising=False)
+
+        with pytest.raises(SystemExit) as exc_info:
+            ctx.require_context()
+
+        assert exc_info.value.code == 1
+        assert any("No instances configured" in msg for msg in messages)
+
+    def test_require_context_exits_multiple_instances(self, tmp_path, monkeypatch):
+        """require_context exits with error if multiple instances and none selected."""
+        messages = []
+        ctx = CliContext(base_dir=tmp_path, db_name="proxy.db", print_func=messages.append)
+        monkeypatch.delenv("GPROXY_INSTANCE", raising=False)
+        monkeypatch.delenv("GPROXY_TENANT", raising=False)
+
+        # Create multiple instances
+        (tmp_path / "instance1").mkdir()
+        (tmp_path / "instance1" / "proxy.db").touch()
+        (tmp_path / "instance2").mkdir()
+        (tmp_path / "instance2" / "proxy.db").touch()
+
+        with pytest.raises(SystemExit) as exc_info:
+            ctx.require_context()
+
+        assert exc_info.value.code == 1
+        assert any("Multiple instances found" in msg for msg in messages)
+
+    def test_require_context_exits_tenant_required(self, tmp_path, monkeypatch):
+        """require_context exits with error if tenant required but missing."""
+        messages = []
+        ctx = CliContext(base_dir=tmp_path, db_name="proxy.db", print_func=messages.append)
+        monkeypatch.setenv("GPROXY_INSTANCE", "my_instance")
+        monkeypatch.delenv("GPROXY_TENANT", raising=False)
+
+        with pytest.raises(SystemExit) as exc_info:
+            ctx.require_context(require_tenant=True)
+
+        assert exc_info.value.code == 1
+        assert any("Tenant required" in msg for msg in messages)
+
+    def test_require_context_with_explicit_values(self, tmp_path, monkeypatch):
+        """require_context uses explicit values over env vars."""
+        ctx = CliContext(base_dir=tmp_path)
+        monkeypatch.setenv("GPROXY_INSTANCE", "env_instance")
+        monkeypatch.setenv("GPROXY_TENANT", "env_tenant")
+
+        instance, tenant = ctx.require_context(
+            explicit_instance="explicit_inst",
+            explicit_tenant="explicit_ten",
+        )
+
+        assert instance == "explicit_inst"
+        assert tenant == "explicit_ten"
+
+
 class TestCliContextCustomConfiguration:
     """Tests for custom CliContext configuration."""
 

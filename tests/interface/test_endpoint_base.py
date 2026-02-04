@@ -21,17 +21,43 @@ class MockDb:
         yield self
 
 
+class RecordNotFoundError(Exception):
+    """Mock exception for record not found."""
+
+    pass
+
+
 class MockTable:
     """Mock table for testing."""
 
     def __init__(self):
         self.db = MockDb()
+        self.pkey = "id"
+        self._records = {"1": {"id": "1", "name": "test"}}
+        self._inserted = []
+        self._deleted = []
 
     async def list_all(self, **kwargs):
         return [{"id": "1"}]
 
     async def get(self, pk: str):
         return {"id": pk, "name": "test"}
+
+    async def select(self):
+        return list(self._records.values())
+
+    async def record(self, pkey=None, **kwargs):
+        if pkey and pkey in self._records:
+            return self._records[pkey]
+        raise RecordNotFoundError(f"Record '{pkey}' not found")
+
+    async def insert(self, record):
+        self._inserted.append(record)
+        self._records[record["id"]] = record
+
+    async def delete(self, where=None):
+        if where and "id" in where:
+            self._deleted.append(where["id"])
 
 
 class TestPOSTDecorator:
@@ -344,6 +370,62 @@ class TestEndpointDiscoveryFilters:
 
         result = manager._get_ee_mixin_from_module(mock_module, "_EE")
         assert result is None
+
+
+class TestBaseEndpointCRUD:
+    """Tests for BaseEndpoint CRUD methods."""
+
+    @pytest.fixture
+    def endpoint(self):
+        """Create base endpoint for testing."""
+
+        class CrudEndpoint(BaseEndpoint):
+            name = "items"
+
+        return CrudEndpoint(MockTable())
+
+    async def test_list_returns_all_records(self, endpoint, monkeypatch):
+        """list() should return all records from table."""
+        # Patch the import inside the method
+        import genro_proxy.sql
+
+        monkeypatch.setattr(genro_proxy.sql, "RecordNotFoundError", RecordNotFoundError)
+        result = await endpoint.list()
+        assert result == [{"id": "1", "name": "test"}]
+
+    async def test_get_returns_record(self, endpoint, monkeypatch):
+        """get() should return record by id."""
+        import genro_proxy.sql
+
+        monkeypatch.setattr(genro_proxy.sql, "RecordNotFoundError", RecordNotFoundError)
+        result = await endpoint.get("1")
+        assert result == {"id": "1", "name": "test"}
+
+    async def test_get_raises_valueerror_when_not_found(self, endpoint, monkeypatch):
+        """get() should raise ValueError when record not found."""
+        import genro_proxy.sql
+
+        monkeypatch.setattr(genro_proxy.sql, "RecordNotFoundError", RecordNotFoundError)
+        with pytest.raises(ValueError, match="items '999' not found"):
+            await endpoint.get("999")
+
+    async def test_add_inserts_record(self, endpoint, monkeypatch):
+        """add() should insert record via table."""
+        import genro_proxy.sql
+
+        monkeypatch.setattr(genro_proxy.sql, "RecordNotFoundError", RecordNotFoundError)
+        result = await endpoint.add("new_id", name="new_name")
+        assert result == {"id": "new_id", "name": "new_name"}
+        assert endpoint.table._inserted[-1] == {"id": "new_id", "name": "new_name"}
+
+    async def test_delete_removes_record(self, endpoint, monkeypatch):
+        """delete() should delete record via table."""
+        import genro_proxy.sql
+
+        monkeypatch.setattr(genro_proxy.sql, "RecordNotFoundError", RecordNotFoundError)
+        result = await endpoint.delete("1")
+        assert result is True
+        assert "1" in endpoint.table._deleted
 
 
 class TestEndpointInvoke:
