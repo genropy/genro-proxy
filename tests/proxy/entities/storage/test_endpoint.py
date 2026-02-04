@@ -138,3 +138,73 @@ class TestStorageEndpointDelete:
         mock_table.delete = AsyncMock(return_value=0)
         result = await endpoint.delete("t1", "NONEXISTENT")
         assert result["ok"] == 0
+
+
+class TestStorageEndpointListFiles:
+    """Tests for StorageEndpoint.list_files() method."""
+
+    async def test_list_files_root(self, endpoint, mock_table):
+        """list_files() returns files in root directory."""
+        mock_manager = MagicMock()
+        mock_manager.has_mount.return_value = True
+
+        mock_child1 = MagicMock()
+        mock_child1.basename = "file1.txt"
+        mock_child1.path = "file1.txt"
+        mock_child1.is_dir = AsyncMock(return_value=False)
+        mock_child1.size = AsyncMock(return_value=1024)
+        mock_child1.mtime = AsyncMock(return_value=1700000000.0)
+        mock_child1.exists = AsyncMock(return_value=True)
+
+        mock_child2 = MagicMock()
+        mock_child2.basename = "subdir"
+        mock_child2.path = "subdir"
+        mock_child2.is_dir = AsyncMock(return_value=True)
+        mock_child2.size = AsyncMock(return_value=0)
+        mock_child2.mtime = AsyncMock(return_value=1700000000.0)
+        mock_child2.exists = AsyncMock(return_value=True)
+
+        mock_node = MagicMock()
+        mock_node.children = AsyncMock(return_value=[mock_child1, mock_child2])
+        mock_manager.node.return_value = mock_node
+
+        mock_table.get_storage_manager = AsyncMock(return_value=mock_manager)
+
+        result = await endpoint.list_files("t1", "HOME", "/")
+
+        mock_table.get_storage_manager.assert_called_once_with("t1")
+        mock_manager.has_mount.assert_called_once_with("HOME")
+        mock_manager.node.assert_called_once_with("HOME", "")
+
+        assert len(result) == 2
+        assert result[0]["name"] == "file1.txt"
+        assert result[0]["is_dir"] is False
+        assert result[0]["size"] == 1024
+        assert result[1]["name"] == "subdir"
+        assert result[1]["is_dir"] is True
+        assert result[1]["size"] == 0
+
+    async def test_list_files_subdir(self, endpoint, mock_table):
+        """list_files() with path navigates to subdirectory."""
+        mock_manager = MagicMock()
+        mock_manager.has_mount.return_value = True
+
+        mock_node = MagicMock()
+        mock_node.children = AsyncMock(return_value=[])
+        mock_manager.node.return_value = mock_node
+
+        mock_table.get_storage_manager = AsyncMock(return_value=mock_manager)
+
+        await endpoint.list_files("t1", "HOME", "/subdir/nested")
+
+        mock_manager.node.assert_called_once_with("HOME", "subdir/nested")
+
+    async def test_list_files_storage_not_found(self, endpoint, mock_table):
+        """list_files() raises ValueError for unknown storage."""
+        mock_manager = MagicMock()
+        mock_manager.has_mount.return_value = False
+
+        mock_table.get_storage_manager = AsyncMock(return_value=mock_manager)
+
+        with pytest.raises(ValueError, match="Storage 'UNKNOWN' not found"):
+            await endpoint.list_files("t1", "UNKNOWN", "/")

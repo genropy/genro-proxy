@@ -14,20 +14,39 @@ from genro_proxy.interface.api_base import register_api_endpoint
 from genro_proxy.interface.endpoint_base import POST, BaseEndpoint
 
 
+class MockTenantsTableForDb:
+    """Mock tenants table for tenant token verification."""
+
+    def __init__(self, valid_tokens=None):
+        self._valid_tokens = valid_tokens or {}
+
+    async def get_tenant_by_token(self, token):
+        return self._valid_tokens.get(token)
+
+
 class MockDb:
     """Mock database for testing with connection() context manager."""
+
+    def __init__(self, tenant_tokens=None):
+        self._tenant_tokens = tenant_tokens or {}
 
     @asynccontextmanager
     async def connection(self):
         """Mock connection context manager (no-op for tests)."""
         yield self
 
+    def table(self, name):
+        """Return mock table by name."""
+        if name == "tenants":
+            return MockTenantsTableForDb(self._tenant_tokens)
+        return None
+
 
 class MockTable:
     """Mock table for testing."""
 
-    def __init__(self):
-        self.db = MockDb()
+    def __init__(self, tenant_tokens=None):
+        self.db = MockDb(tenant_tokens)
 
     async def select(self, **kwargs):
         return [{"id": "1", "name": "test"}]
@@ -267,3 +286,268 @@ class TestApiNoAuth:
         )
         # Token validation still happens, random tokens rejected
         assert response.status_code == 401
+
+
+# =============================================================================
+# Admin token tests
+# =============================================================================
+
+
+class TestApiAdminAuthentication:
+    """Tests for admin-only authentication with require_admin_token."""
+
+    @pytest.fixture
+    def app_with_admin_auth(self, endpoint):
+        """Create FastAPI app with admin-only authentication."""
+        from fastapi import FastAPI
+
+        from genro_proxy.interface.api_base import admin_dependency, register_api_endpoint
+
+        app = FastAPI()
+        app.state.api_token = "admin-secret-token"
+
+        router = APIRouter(prefix="/admin", dependencies=[admin_dependency])
+        register_api_endpoint(router, endpoint)
+        app.include_router(router)
+        return app
+
+    @pytest.fixture
+    def admin_client(self, app_with_admin_auth):
+        """Create test client for admin app."""
+        return TestClient(app_with_admin_auth)
+
+    def test_admin_without_token_returns_401(self, admin_client):
+        """Admin endpoints without token should return 401."""
+        response = admin_client.get("/admin/samples/list")
+        assert response.status_code == 401
+        assert "Admin token required" in response.json()["detail"]
+
+    def test_admin_with_invalid_token_returns_401(self, admin_client):
+        """Admin endpoints with invalid token should return 401."""
+        response = admin_client.get(
+            "/admin/samples/list",
+            headers={"X-API-Token": "wrong-token"},
+        )
+        assert response.status_code == 401
+        assert "Invalid API token" in response.json()["detail"]
+
+    def test_admin_with_valid_token_succeeds(self, admin_client):
+        """Admin endpoints with valid admin token should succeed."""
+        response = admin_client.get(
+            "/admin/samples/list",
+            headers={"X-API-Token": "admin-secret-token"},
+        )
+        assert response.status_code == 200
+
+
+class TestApiAdminNoAuth:
+    """Tests for admin endpoints without auth configured."""
+
+    @pytest.fixture
+    def app_admin_no_auth(self, endpoint):
+        """Create FastAPI app with admin dependency but no token configured."""
+        from fastapi import FastAPI
+
+        from genro_proxy.interface.api_base import admin_dependency, register_api_endpoint
+
+        app = FastAPI()
+        app.state.api_token = None  # No auth
+
+        router = APIRouter(prefix="/admin", dependencies=[admin_dependency])
+        register_api_endpoint(router, endpoint)
+        app.include_router(router)
+        return app
+
+    @pytest.fixture
+    def admin_no_auth_client(self, app_admin_no_auth):
+        """Create test client."""
+        return TestClient(app_admin_no_auth)
+
+    def test_admin_no_auth_allows_without_token(self, admin_no_auth_client):
+        """When api_token=None, admin endpoints allow access without token."""
+        response = admin_no_auth_client.get("/admin/samples/list")
+        assert response.status_code == 200
+
+
+# =============================================================================
+# Route handler error cases
+# =============================================================================
+
+
+class TestApiTenantAuthentication:
+    """Tests for tenant token authentication."""
+
+    @pytest.fixture
+    def endpoint_with_tenant(self):
+        """Create endpoint with tenant token support."""
+        tenant_tokens = {"tenant-secret-token": {"id": "acme", "name": "ACME Corp"}}
+        return SampleEndpoint(MockTable(tenant_tokens))
+
+    @pytest.fixture
+    def app_with_tenant_auth(self, endpoint_with_tenant):
+        """Create FastAPI app with tenant authentication enabled."""
+        from fastapi import FastAPI
+
+        from genro_proxy.interface.api_base import auth_dependency, register_api_endpoint
+
+        app = FastAPI()
+        app.state.api_token = "admin-secret-token"
+
+        router = APIRouter(prefix="/api", dependencies=[auth_dependency])
+        register_api_endpoint(router, endpoint_with_tenant)
+        app.include_router(router)
+        return app
+
+    @pytest.fixture
+    def tenant_client(self, app_with_tenant_auth):
+        """Create test client for tenant auth app."""
+        return TestClient(app_with_tenant_auth)
+
+    def test_tenant_token_allows_access(self, tenant_client):
+        """Valid tenant token should allow API access."""
+        response = tenant_client.get(
+            "/api/samples/list",
+            headers={"X-API-Token": "tenant-secret-token"},
+        )
+        assert response.status_code == 200
+
+    def test_admin_token_still_works(self, tenant_client):
+        """Admin token should still work."""
+        response = tenant_client.get(
+            "/api/samples/list",
+            headers={"X-API-Token": "admin-secret-token"},
+        )
+        assert response.status_code == 200
+
+    def test_invalid_token_rejected(self, tenant_client):
+        """Invalid token should be rejected."""
+        response = tenant_client.get(
+            "/api/samples/list",
+            headers={"X-API-Token": "invalid-token"},
+        )
+        assert response.status_code == 401
+
+
+class TestApiAdminTenantToken:
+    """Tests for tenant token on admin endpoints."""
+
+    @pytest.fixture
+    def mock_tenants_table(self):
+        """Create mock tenants table."""
+
+        class MockTenantsTable:
+            async def get_tenant_by_token(self, token):
+                if token == "tenant-token":
+                    return {"id": "acme"}
+                return None
+
+        return MockTenantsTable()
+
+    @pytest.fixture
+    def mock_proxy(self, mock_tenants_table):
+        """Create mock proxy."""
+
+        class MockDb:
+            def __init__(self, tenants_table):
+                self._tables = {"tenants": tenants_table}
+
+            def table(self, name):
+                return self._tables.get(name)
+
+        class MockProxy:
+            def __init__(self, tenants_table):
+                self.db = MockDb(tenants_table)
+
+        return MockProxy(mock_tenants_table)
+
+    @pytest.fixture
+    def app_with_admin_tenant(self, endpoint, mock_proxy, monkeypatch):
+        """Create app with admin dependency and tenant support."""
+        from fastapi import FastAPI
+
+        from genro_proxy.interface import api_base
+        from genro_proxy.interface.api_base import admin_dependency, register_api_endpoint
+
+        monkeypatch.setattr(api_base, "_proxy", mock_proxy)
+
+        app = FastAPI()
+        app.state.api_token = "admin-token"
+
+        router = APIRouter(prefix="/admin", dependencies=[admin_dependency])
+        register_api_endpoint(router, endpoint)
+        app.include_router(router)
+        return app
+
+    @pytest.fixture
+    def admin_tenant_client(self, app_with_admin_tenant):
+        """Create test client."""
+        return TestClient(app_with_admin_tenant)
+
+    def test_tenant_token_forbidden_on_admin(self, admin_tenant_client):
+        """Tenant token should be forbidden on admin endpoints."""
+        response = admin_tenant_client.get(
+            "/admin/samples/list",
+            headers={"X-API-Token": "tenant-token"},
+        )
+        assert response.status_code == 403
+        assert "Admin token required" in response.json()["detail"]
+
+
+class TestApiRouteErrors:
+    """Tests for API route error handling."""
+
+    @pytest.fixture
+    def error_endpoint(self):
+        """Create endpoint that raises different errors."""
+
+        class ErrorEndpoint(BaseEndpoint):
+            name = "errors"
+
+            async def server_error(self) -> dict:
+                """Raise a server error."""
+                raise RuntimeError("Internal server error")
+
+            @POST
+            async def post_server_error(self) -> dict:
+                """POST that raises server error."""
+                raise RuntimeError("Internal server error")
+
+        return ErrorEndpoint(MockTable())
+
+    @pytest.fixture
+    def error_app(self, error_endpoint):
+        """Create app with error endpoint."""
+        from fastapi import FastAPI
+
+        app = FastAPI()
+        router = APIRouter(prefix="/api")
+        register_api_endpoint(router, error_endpoint)
+        app.include_router(router)
+        return app
+
+    @pytest.fixture
+    def error_client(self, error_app):
+        """Create test client."""
+        return TestClient(error_app)
+
+    def test_get_server_error_returns_500(self, error_client):
+        """GET route server error should return 500."""
+        response = error_client.get("/api/errors/server-error")
+        assert response.status_code == 500
+        assert "Internal server error" in response.json()["error"]
+
+    def test_post_server_error_returns_500(self, error_client):
+        """POST route server error should return 500."""
+        response = error_client.post("/api/errors/post-server-error", json={})
+        assert response.status_code == 500
+        assert "Internal server error" in response.json()["error"]
+
+    def test_post_with_invalid_json(self, client):
+        """POST with invalid JSON body should handle gracefully."""
+        response = client.post(
+            "/api/samples/add",
+            content="not json",
+            headers={"Content-Type": "application/json"},
+        )
+        # Should still try to validate (with empty body)
+        assert response.status_code == 422

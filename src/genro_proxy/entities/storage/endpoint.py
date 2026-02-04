@@ -81,5 +81,47 @@ class StorageEndpoint(BaseEndpoint):
         deleted = await self.table.delete(where={"tenant_id": tenant_id, "name": name})
         return {"ok": deleted, "tenant_id": tenant_id, "name": name}
 
+    async def list_files(
+        self,
+        tenant_id: str,
+        storage_name: str,
+        path: str = "/",
+    ) -> list[dict]:
+        """List files and directories in a storage path.
+
+        Args:
+            tenant_id: The tenant ID.
+            storage_name: Name of the storage backend.
+            path: Path within the storage (default: root).
+
+        Returns:
+            List of file/directory info dicts with keys:
+                - name: File or directory name
+                - path: Full path within storage
+                - is_dir: True if directory
+                - size: File size (0 for directories)
+                - mtime: Last modification time (Unix timestamp)
+        """
+        manager = await self.table.get_storage_manager(tenant_id)
+
+        if not manager.has_mount(storage_name):
+            raise ValueError(f"Storage '{storage_name}' not found for tenant '{tenant_id}'")
+
+        node = manager.node(storage_name, path.lstrip("/"))
+        children = await node.children()
+
+        result = []
+        for child in children:
+            is_dir = await child.is_dir()
+            result.append({
+                "name": child.basename,
+                "path": child.path,
+                "is_dir": is_dir,
+                "size": 0 if is_dir else await child.size(),
+                "mtime": await child.mtime() if await child.exists() else 0,
+            })
+
+        return result
+
 
 __all__ = ["StorageEndpoint"]

@@ -26,7 +26,7 @@ from pydantic import ValidationError
 if TYPE_CHECKING:
     from genro_proxy.proxy_base import ProxyBase
 
-from .endpoint_base import BaseEndpoint
+from .endpoint_base import BaseEndpoint, InvalidTokenError
 
 # =============================================================================
 # Authentication
@@ -45,19 +45,20 @@ async def require_token(
 ) -> None:
     """Validate API token from X-API-Token header.
 
-    Accepts global admin token (full access) or tenant token (own resources).
-    Stores token info in request.state for downstream verification.
+    Checks admin token immediately (string comparison, no DB).
+    For non-admin tokens, stores raw token for later DB verification
+    inside the route handler where a DB connection is available.
 
     Args:
         request: FastAPI request object.
         api_token: Token from X-API-Token header (via Depends).
 
     Raises:
-        HTTPException: 401 if token is invalid or missing.
+        HTTPException: 401 if token is missing (when auth configured).
     """
     request.state.api_token = api_token
     request.state.is_admin = False
-    request.state.token_tenant_id = None
+    request.state.token_tenant_id = None  # Will be resolved in route handler
 
     expected = getattr(request.app.state, "api_token", None)
 
@@ -67,24 +68,13 @@ async def require_token(
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing API token")
         return  # No auth configured = open access
 
-    # Check global admin token
+    # Check global admin token (no DB needed)
     if expected is not None and secrets.compare_digest(api_token, expected):
         request.state.is_admin = True
         return
 
-    # Check tenant token
-    if _proxy and hasattr(_proxy, "db"):
-        try:
-            tenants_table = _proxy.db.table("tenants")
-            if hasattr(tenants_table, "get_tenant_by_token"):
-                tenant = await tenants_table.get_tenant_by_token(api_token)
-                if tenant:
-                    request.state.token_tenant_id = tenant["id"]
-                    return
-        except Exception:
-            pass  # Table not available, fall through to error
-
-    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid API token")
+    # Non-admin token: will be verified as tenant token in route handler
+    # (requires DB connection which isn't available here)
 
 
 async def require_admin_token(
@@ -114,20 +104,14 @@ async def require_admin_token(
         return
 
     # Check if it's a valid tenant token (forbidden for admin endpoints)
-    if _proxy and hasattr(_proxy, "db"):
-        try:
-            tenants_table = _proxy.db.table("tenants")
-            if hasattr(tenants_table, "get_tenant_by_token"):
-                tenant = await tenants_table.get_tenant_by_token(api_token)
-                if tenant:
-                    raise HTTPException(
-                        status.HTTP_403_FORBIDDEN,
-                        "Admin token required, tenant tokens not allowed",
-                    )
-        except HTTPException:
-            raise
-        except Exception:
-            pass
+    if _proxy:
+        tenants_table = _proxy.db.table("tenants")
+        tenant = await tenants_table.get_tenant_by_token(api_token)
+        if tenant:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Admin token required, tenant tokens not allowed",
+            )
 
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid API token")
 
@@ -178,8 +162,18 @@ def _add_post_route(
             body = {}
 
         try:
-            result = await endpoint.invoke(method_name, body)
+            # Use invoke - handles connection, tenant resolution, validation
+            result = await endpoint.invoke(
+                method_name,
+                body,
+                api_token=getattr(request.state, "api_token", None),
+                is_admin=getattr(request.state, "is_admin", False),
+            )
             return JSONResponse(content={"data": result})
+        except HTTPException:
+            raise
+        except InvalidTokenError as e:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(e))
         except ValidationError as e:
             return JSONResponse(status_code=422, content={"error": e.errors()})
         except ValueError as e:
@@ -204,8 +198,18 @@ def _add_get_route(
         params = dict(request.query_params)
 
         try:
-            result = await endpoint.invoke(method_name, params)
+            # Use invoke - handles connection, tenant resolution, validation
+            result = await endpoint.invoke(
+                method_name,
+                params,
+                api_token=getattr(request.state, "api_token", None),
+                is_admin=getattr(request.state, "is_admin", False),
+            )
             return JSONResponse(content={"data": result})
+        except HTTPException:
+            raise
+        except InvalidTokenError as e:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(e))
         except ValidationError as e:
             return JSONResponse(status_code=422, content={"error": e.errors()})
         except ValueError as e:

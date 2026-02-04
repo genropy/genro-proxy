@@ -46,6 +46,10 @@ if TYPE_CHECKING:
     from genro_proxy.proxy_base import ProxyBase
 
 
+class InvalidTokenError(Exception):
+    """Raised when API token is invalid (not admin, not valid tenant token)."""
+
+
 def POST(method: Callable) -> Callable:
     """Decorator to mark an endpoint method as POST.
 
@@ -305,7 +309,14 @@ class BaseEndpoint:
             return (annotation, ...)  # Required field
         return (annotation, default)
 
-    async def invoke(self, method_name: str, params: dict[str, Any]) -> Any:
+    async def invoke(
+        self,
+        method_name: str,
+        params: dict[str, Any],
+        *,
+        api_token: str | None = None,
+        is_admin: bool = False,
+    ) -> Any:
         """Validate parameters and call endpoint method within a transaction.
 
         Single entry point for all channels (CLI, API, UI, etc.).
@@ -313,28 +324,60 @@ class BaseEndpoint:
         Wraps execution in a database transaction: COMMIT on success,
         ROLLBACK on exception.
 
+        For API calls with tenant tokens, resolves tenant_id from token after
+        opening DB connection. Admin tokens must pass tenant_id explicitly.
+
         Args:
             method_name: Name of the method to call.
             params: Raw parameters dict (may contain strings from CLI).
+            api_token: Optional API token for tenant resolution.
+            is_admin: True if admin token was used (skip tenant resolution).
 
         Returns:
             Method result.
 
         Raises:
             ValidationError: If params don't match method signature.
-            ValueError: If method not found.
+            ValueError: If method not found or invalid token.
         """
         method = getattr(self, method_name, None)
         if method is None or not callable(method):
             raise ValueError(f"Method '{method_name}' not found on {self.name}")
 
-        # Create and validate with Pydantic model
-        model_class = self.create_request_model(method_name)
-        validated = model_class.model_validate(params)
-
         # Call method within transaction (auto commit/rollback)
         async with self.table.db.connection():
+            # Resolve tenant_id from token if needed (non-admin token)
+            if api_token and not is_admin and "tenant_id" not in params:
+                tenant_id = await self._resolve_tenant_from_token(api_token)
+                if tenant_id:
+                    params["tenant_id"] = tenant_id
+
+            # Create and validate with Pydantic model
+            model_class = self.create_request_model(method_name)
+            validated = model_class.model_validate(params)
+
             return await method(**validated.model_dump())
+
+    async def _resolve_tenant_from_token(self, api_token: str) -> str | None:
+        """Resolve tenant_id from API token by checking DB.
+
+        Args:
+            api_token: The API token to look up.
+
+        Returns:
+            tenant_id if valid tenant token, None otherwise.
+
+        Raises:
+            InvalidTokenError: If token is invalid (not admin, not tenant).
+        """
+        try:
+            tenants_table = self.table.db.table("tenants")
+            tenant = await tenants_table.get_tenant_by_token(api_token)
+            if tenant:
+                return tenant["id"]
+        except (AttributeError, KeyError):
+            pass
+        raise InvalidTokenError("Invalid API token")
 
 
 class EndpointManager:
@@ -507,4 +550,4 @@ class EndpointManager:
         return self._endpoints.items()
 
 
-__all__ = ["BaseEndpoint", "EndpointManager", "POST"]
+__all__ = ["BaseEndpoint", "EndpointManager", "InvalidTokenError", "POST"]
