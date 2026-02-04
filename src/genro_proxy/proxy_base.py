@@ -45,6 +45,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from .interface.api_base import ApiManager
 from .interface.cli_base import CliManager
@@ -121,6 +122,10 @@ class ProxyBase:
     entity_packages: list[str] = ["genro_proxy.entities"]
     ee_entity_packages: list[str] = []
     encryption_key_env: str = "PROXY_ENCRYPTION_KEY"
+
+    # Must override in subclass
+    base_dir: Path = Path.home() / ".gproxy"
+    cli_command: str = "genro-proxy"
 
     def __init__(self, config: ProxyConfigBase | None = None):
         """Initialize base proxy with config and all managers."""

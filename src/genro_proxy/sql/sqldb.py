@@ -220,9 +220,47 @@ class SqlDb:
             raise ValueError(f"Table '{name}' not registered. Use add_table() first.")
         return self.tables[name]
 
+    def _topological_sort_tables(self) -> list["Table"]:
+        """Sort tables by foreign key dependencies.
+
+        Algorithm: iterate pending tables, add to result if no FK
+        or all FK targets already in result, otherwise re-queue.
+        """
+        pending = list(self.tables.values())
+        sorted_tables: dict[str, "Table"] = {}
+        max_iterations = len(pending) * len(pending)  # detect cycles
+        iterations = 0
+
+        while pending:
+            iterations += 1
+            if iterations > max_iterations:
+                remaining = [t.name for t in pending]
+                raise ValueError(f"Circular foreign key dependencies: {remaining}")
+
+            table = pending.pop(0)
+
+            # FK with sql=True that reference registered tables
+            fk_tables = {
+                col.relation_table
+                for col in table.columns.values()
+                if col.relation_sql and col.relation_table and col.relation_table in self.tables
+            }
+
+            if not fk_tables or fk_tables.issubset(sorted_tables.keys()):
+                sorted_tables[table.name] = table
+            else:
+                pending.append(table)
+
+        return list(sorted_tables.values())
+
     async def check_structure(self) -> None:
-        """Create all registered tables if they don't exist."""
-        for table in self.tables.values():
+        """Create all registered tables if they don't exist.
+
+        Tables are created in topological order based on foreign key
+        dependencies, ensuring referenced tables exist before tables
+        that reference them.
+        """
+        for table in self._topological_sort_tables():
             await table.create_schema()
 
     # -------------------------------------------------------------------------

@@ -371,3 +371,214 @@ class TestSqlDbDiscoverMRO:
         assert hasattr(db.tables["tenants"], "get_wopi_mode")
         assert db.tables["tenants"].get_wopi_mode() == "extended"
         assert type(db.tables["tenants"]).__name__ == "ExtendedTenantsTable"
+
+
+class TestSqlDbTopologicalSort:
+    """Tests for _topological_sort_tables() method."""
+
+    def test_tables_without_fk_returned_in_order(self):
+        """Tables without FK are returned (order based on insertion)."""
+        class TableA(Table):
+            name = "table_a"
+            pkey = "id"
+
+        class TableB(Table):
+            name = "table_b"
+            pkey = "id"
+
+        db = SqlDb(":memory:")
+        db.add_table(TableA)
+        db.add_table(TableB)
+
+        sorted_tables = db._topological_sort_tables()
+        names = [t.name for t in sorted_tables]
+
+        assert len(names) == 2
+        assert "table_a" in names
+        assert "table_b" in names
+
+    def test_fk_table_comes_after_referenced_table(self):
+        """Table with FK comes after the referenced table."""
+        from genro_proxy.sql.column import String
+
+        class ParentTable(Table):
+            name = "parents"
+            pkey = "id"
+
+            def configure(self):
+                self.columns.column("id", String)
+
+        class ChildTable(Table):
+            name = "children"
+            pkey = "id"
+
+            def configure(self):
+                self.columns.column("id", String)
+                self.columns.column("parent_id", String).relation("parents", sql=True)
+
+        db = SqlDb(":memory:")
+        # Add child first (wrong order)
+        db.add_table(ChildTable)
+        db.add_table(ParentTable)
+
+        sorted_tables = db._topological_sort_tables()
+        names = [t.name for t in sorted_tables]
+
+        assert names.index("parents") < names.index("children")
+
+    def test_multiple_fk_dependencies(self):
+        """Table with multiple FKs comes after all referenced tables."""
+        from genro_proxy.sql.column import String
+
+        class TableA(Table):
+            name = "table_a"
+            pkey = "id"
+
+            def configure(self):
+                self.columns.column("id", String)
+
+        class TableB(Table):
+            name = "table_b"
+            pkey = "id"
+
+            def configure(self):
+                self.columns.column("id", String)
+
+        class TableC(Table):
+            name = "table_c"
+            pkey = "id"
+
+            def configure(self):
+                self.columns.column("id", String)
+                self.columns.column("a_id", String).relation("table_a", sql=True)
+                self.columns.column("b_id", String).relation("table_b", sql=True)
+
+        db = SqlDb(":memory:")
+        # Add in wrong order
+        db.add_table(TableC)
+        db.add_table(TableA)
+        db.add_table(TableB)
+
+        sorted_tables = db._topological_sort_tables()
+        names = [t.name for t in sorted_tables]
+
+        # table_c must come after both table_a and table_b
+        assert names.index("table_a") < names.index("table_c")
+        assert names.index("table_b") < names.index("table_c")
+
+    def test_fk_to_unregistered_table_ignored(self):
+        """FK to unregistered table is ignored (no dependency)."""
+        from genro_proxy.sql.column import String
+
+        class ChildTable(Table):
+            name = "children"
+            pkey = "id"
+
+            def configure(self):
+                self.columns.column("id", String)
+                self.columns.column("external_id", String).relation("external_table", sql=True)
+
+        db = SqlDb(":memory:")
+        db.add_table(ChildTable)
+
+        # Should not raise, external_table is not registered
+        sorted_tables = db._topological_sort_tables()
+        assert len(sorted_tables) == 1
+        assert sorted_tables[0].name == "children"
+
+    def test_circular_dependency_raises_error(self):
+        """Circular FK dependencies raise ValueError."""
+        from genro_proxy.sql.column import String
+
+        class TableA(Table):
+            name = "table_a"
+            pkey = "id"
+
+            def configure(self):
+                self.columns.column("id", String)
+                self.columns.column("b_id", String).relation("table_b", sql=True)
+
+        class TableB(Table):
+            name = "table_b"
+            pkey = "id"
+
+            def configure(self):
+                self.columns.column("id", String)
+                self.columns.column("a_id", String).relation("table_a", sql=True)
+
+        db = SqlDb(":memory:")
+        db.add_table(TableA)
+        db.add_table(TableB)
+
+        with pytest.raises(ValueError, match="Circular foreign key dependencies"):
+            db._topological_sort_tables()
+
+    def test_relation_without_sql_flag_ignored(self):
+        """Relations without sql=True are ignored for ordering."""
+        from genro_proxy.sql.column import String
+
+        class ParentTable(Table):
+            name = "parents"
+            pkey = "id"
+
+            def configure(self):
+                self.columns.column("id", String)
+
+        class ChildTable(Table):
+            name = "children"
+            pkey = "id"
+
+            def configure(self):
+                self.columns.column("id", String)
+                # sql=False (default), so no SQL constraint
+                self.columns.column("parent_id", String).relation("parents")
+
+        db = SqlDb(":memory:")
+        db.add_table(ChildTable)
+        db.add_table(ParentTable)
+
+        sorted_tables = db._topological_sort_tables()
+        names = [t.name for t in sorted_tables]
+
+        # Order doesn't matter since relation is not sql=True
+        assert len(names) == 2
+
+    async def test_check_structure_uses_topological_order(self):
+        """check_structure() creates tables in correct FK order."""
+        from genro_proxy.sql.column import String
+
+        creation_order = []
+
+        class ParentTable(Table):
+            name = "parents"
+            pkey = "id"
+
+            def configure(self):
+                self.columns.column("id", String)
+
+            async def create_schema(self):
+                creation_order.append(self.name)
+                await super().create_schema()
+
+        class ChildTable(Table):
+            name = "children"
+            pkey = "id"
+
+            def configure(self):
+                self.columns.column("id", String)
+                self.columns.column("parent_id", String).relation("parents", sql=True)
+
+            async def create_schema(self):
+                creation_order.append(self.name)
+                await super().create_schema()
+
+        db = SqlDb(":memory:")
+        # Add in wrong order
+        db.add_table(ChildTable)
+        db.add_table(ParentTable)
+
+        async with db.connection():
+            await db.check_structure()
+
+        # parents must be created before children
+        assert creation_order.index("parents") < creation_order.index("children")

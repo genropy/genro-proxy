@@ -14,7 +14,7 @@ Operations include:
     - get_sync_status: Monitor tenant synchronization health
     - upgrade_to_ee: Transition from Community to Enterprise Edition
 
-    All instances (filesystem ~/.gproxy/):
+    All instances (filesystem proxy.base_dir):
     - list_all: List all configured instances with running status
     - stop: Stop running instance(s)
     - restart: Restart running instance(s)
@@ -50,9 +50,6 @@ from ...interface.endpoint_base import POST, BaseEndpoint
 
 if TYPE_CHECKING:
     from .table import InstanceTable
-
-# Default base directory for instances
-DEFAULT_BASE_DIR = Path.home() / ".gproxy"
 
 
 class InstanceEndpoint(BaseEndpoint):
@@ -282,16 +279,12 @@ class InstanceEndpoint(BaseEndpoint):
         return {"ok": True, "edition": "ee", "message": "Upgraded to Enterprise Edition"}
 
     # -------------------------------------------------------------------------
-    # Filesystem instance management (~/.gproxy/)
+    # Filesystem instance management (proxy.base_dir)
     # -------------------------------------------------------------------------
-
-    def _get_base_dir(self) -> Path:
-        """Get base directory for instances."""
-        return DEFAULT_BASE_DIR
 
     def _get_instance_dir(self, name: str) -> Path:
         """Get instance directory path."""
-        return self._get_base_dir() / name
+        return self.proxy.base_dir / name
 
     def _get_pid_file(self, name: str) -> Path:
         """Get PID file path for an instance."""
@@ -489,7 +482,7 @@ api_token = {api_token}
         if background:
             # Start in background via subprocess
             cmd = [
-                "genro-proxy", "serve", name,
+                self.proxy.cli_command, "serve", name,
                 "--host", effective_host,
                 "--port", str(effective_port),
             ]
@@ -550,7 +543,7 @@ api_token = {api_token}
                 - pid: Process ID if running
                 - url: URL if running
         """
-        base_dir = self._get_base_dir()
+        base_dir = self.proxy.base_dir
 
         if not base_dir.exists():
             return {"ok": True, "instances": []}
@@ -652,7 +645,7 @@ api_token = {api_token}
         stopped = stop_result.get("stopped", [])
 
         # Return instructions for starting
-        start_commands = [f"genro-proxy serve {inst}" for inst in stopped]
+        start_commands = [f"{self.proxy.cli_command} serve {inst}" for inst in stopped]
 
         return {
             "ok": True,

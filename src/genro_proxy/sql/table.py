@@ -3,10 +3,10 @@
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any
 
 from genro_toolbox import get_uuid
+from genro_tytx import from_tytx, to_tytx
 
 from .column import Columns
 
@@ -299,19 +299,19 @@ class Table:
     # -------------------------------------------------------------------------
 
     def _encode_json_fields(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Encode JSON fields for storage."""
+        """Encode JSON fields for storage using TYTX (preserves datetime, Decimal, etc.)."""
         result = dict(data)
         for col_name in self.columns.json_columns():
             if col_name in result and result[col_name] is not None:
-                result[col_name] = json.dumps(result[col_name])
+                result[col_name] = to_tytx(result[col_name])
         return result
 
     def _decode_json_fields(self, row: dict[str, Any]) -> dict[str, Any]:
-        """Decode JSON fields from storage."""
+        """Decode JSON fields from storage using TYTX (restores datetime, Decimal, etc.)."""
         result = dict(row)
         for col_name in self.columns.json_columns():
             if col_name in result and result[col_name] is not None:
-                result[col_name] = json.loads(result[col_name])
+                result[col_name] = from_tytx(result[col_name])
         return result
 
     def _decode_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
