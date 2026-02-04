@@ -10,8 +10,49 @@ Tables in genro-proxy:
 
 - Define database schema via ``configure()``
 - Provide CRUD operations (select, insert, update, delete)
-- Handle JSON encoding/decoding automatically
+- Handle JSON encoding/decoding automatically (with TYTX for type preservation)
 - Support field encryption
+- **Handle type conversions automatically** - never convert manually!
+
+Type Handling (IMPORTANT)
+-------------------------
+
+The SQL layer handles all type conversions automatically. **Never do manual
+conversions** like ``.isoformat()`` or ``datetime.fromisoformat()``.
+
+**CORRECT** - Pass native Python types directly:
+
+.. code-block:: python
+
+    from datetime import datetime
+    from decimal import Decimal
+
+    # Insert with native types
+    await table.insert({
+        "created_at": datetime.now(),
+        "amount": Decimal("99.99"),
+        "metadata": {"key": "value", "timestamp": datetime.now()}  # JSON column
+    })
+
+    # Read - types are preserved
+    record = await table.record(pk)
+    record["created_at"]  # → datetime object
+    record["amount"]      # → Decimal (if stored in JSON column)
+
+**WRONG** - Manual serialization:
+
+.. code-block:: python
+
+    # ❌ DON'T do this
+    await table.insert({"created_at": datetime.now().isoformat()})
+
+    # ❌ DON'T do this
+    record = await table.record(pk)
+    dt = datetime.fromisoformat(record["created_at"])
+
+For JSON columns (``json_encoded=True``), TYTX preserves ``datetime``, ``Decimal``,
+``date``, ``time`` automatically. For ``Timestamp`` columns, the adapter handles
+conversion between Python datetime and database format.
 
 Base Table Structure
 --------------------
@@ -187,7 +228,7 @@ For atomic updates, use the record context manager:
             {"tenant_id": tenant_id, "id": account_id}
         ) as rec:
             if rec:
-                rec["last_used"] = datetime.now().isoformat()
+                rec["last_used"] = datetime.now()  # Pass datetime directly, no .isoformat()!
 
     async def upsert(self, data: dict) -> str:
         \"\"\"Insert or update.\"\"\"

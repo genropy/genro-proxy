@@ -156,6 +156,22 @@ class Table:
     Subclasses define columns via configure() hook and implement
     domain-specific operations.
 
+    IMPORTANT - Type Handling:
+        The SQL layer handles all type conversions automatically. NEVER do
+        manual conversions like .isoformat() or datetime.fromisoformat().
+
+        ✓ CORRECT: Pass native Python types directly
+            await table.insert({"created_at": datetime.now(), "amount": Decimal("99.99")})
+            record = await table.record(pk)  # record["created_at"] is datetime
+
+        ✗ WRONG: Manual serialization/deserialization
+            await table.insert({"created_at": datetime.now().isoformat()})  # NO!
+            dt = datetime.fromisoformat(record["created_at"])  # NO!
+
+        For JSON columns (json_encoded=True), TYTX preserves datetime, Decimal,
+        date, time automatically. For Timestamp columns, the adapter handles
+        conversion between Python datetime and database format.
+
     Attributes:
         name: Table name in database.
         pkey: Primary key column name (e.g., "pk" or "id").

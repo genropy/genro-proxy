@@ -56,4 +56,35 @@ Questo include:
 
 ---
 
+## SQL Layer Rules
+
+### Type Conversions Are Automatic
+
+**NEVER do manual type conversions when using the SQL layer.**
+
+The SQL layer (Table class) handles all type conversions automatically:
+- `datetime`, `Decimal`, `date`, `time` are preserved in JSON columns via TYTX
+- `Timestamp` columns handle Python datetime ↔ database format automatically
+
+```python
+# ❌ WRONG - manual serialization
+await table.insert({"created_at": datetime.now().isoformat()})
+record = await table.record(pk)
+dt = datetime.fromisoformat(record["created_at"])
+
+# ✅ CORRECT - pass native Python types directly
+await table.insert({"created_at": datetime.now()})
+record = await table.record(pk)
+record["created_at"]  # → datetime object, ready to use
+```
+
+**This applies to:**
+- All Table CRUD operations (insert, update, select, record)
+- JSON columns (`json_encoded=True`)
+- Timestamp columns
+
+**DO NOT** use `.isoformat()`, `datetime.fromisoformat()`, or any manual conversion.
+
+---
+
 **All general policies are inherited from the parent document.**
