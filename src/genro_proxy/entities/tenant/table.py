@@ -44,6 +44,12 @@ class TenantsTable(Table):
         tenant["active"] = bool(tenant.get("active", 1))
         return tenant
 
+    def on_inserting(self, record: dict[str, Any]) -> None:
+        """Generate API key on tenant creation."""
+        api_key = secrets.token_urlsafe(32)
+        record["api_key_hash"] = hashlib.sha256(api_key.encode()).hexdigest()
+        record["_api_key"] = api_key  # Transient field, returned once
+
     async def ensure_default(self) -> None:
         """Ensure the 'default' tenant exists for CE single-tenant mode."""
         async with self.record_to_update("default", insert_missing=True) as rec:

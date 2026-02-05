@@ -68,7 +68,7 @@ class TenantEndpoint(BaseEndpoint):
             active: Whether tenant is active.
 
         Returns:
-            Tenant dict.
+            Tenant dict. On insert, includes api_key (shown once).
         """
         async with self.table.record_to_update(id, insert_missing=True) as rec:
             if name is not None:
@@ -81,7 +81,11 @@ class TenantEndpoint(BaseEndpoint):
                 rec["config"] = config
             rec["active"] = 1 if active else 0
 
-        return await self.get(id)
+        result = await self.get(id)
+        # Include api_key if this was an insert (on_inserting generated it)
+        if "_api_key" in rec:
+            result["api_key"] = rec["_api_key"]
+        return result
 
     async def get(self, tenant_id: str) -> dict:
         """Retrieve a single tenant configuration.
