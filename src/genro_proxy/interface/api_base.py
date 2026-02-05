@@ -123,9 +123,9 @@ admin_dependency = Depends(require_admin_token)
 
 
 def register_api_endpoint(router: APIRouter, endpoint: BaseEndpoint) -> None:
-    """Register all methods of an endpoint as API routes.
+    """Register API-enabled methods of an endpoint as routes.
 
-    Creates routes for each public async method:
+    Creates routes for each public async method that has api=True:
     - GET methods: /{endpoint_name}/{method_name}
     - POST methods: /{endpoint_name}/{method_name}
 
@@ -137,6 +137,10 @@ def register_api_endpoint(router: APIRouter, endpoint: BaseEndpoint) -> None:
     """
 
     for method_name, method in endpoint.get_methods():
+        # Skip methods not available for API channel
+        if not endpoint.is_available_for_channel(method_name, "api"):
+            continue
+
         http_method = endpoint.get_http_method(method_name)
         path = f"/{endpoint.name}/{method_name.replace('_', '-')}"
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ...interface.endpoint_base import POST, BaseEndpoint
+from ...interface.endpoint_base import BaseEndpoint, endpoint
 
 if TYPE_CHECKING:
     from .table import StoragesTable
@@ -22,7 +22,7 @@ class StorageEndpoint(BaseEndpoint):
     def __init__(self, table: StoragesTable):
         super().__init__(table)
 
-    @POST
+    @endpoint(post=True)
     async def add(
         self,
         tenant_id: str,
@@ -75,7 +75,7 @@ class StorageEndpoint(BaseEndpoint):
         """List all storage backends for a tenant."""
         return await self.table.select(where={"tenant_id": tenant_id}, order_by="name")
 
-    @POST
+    @endpoint(post=True)
     async def delete(self, tenant_id: str, name: str) -> dict:
         """Delete a storage backend."""
         deleted = await self.table.delete(where={"tenant_id": tenant_id, "name": name})

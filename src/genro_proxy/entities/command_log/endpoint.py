@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ...interface.endpoint_base import POST, BaseEndpoint
+from ...interface.endpoint_base import BaseEndpoint, endpoint
 
 if TYPE_CHECKING:
     from .table import CommandLogTable
@@ -124,7 +124,7 @@ class CommandLogEndpoint(BaseEndpoint):
             until_ts=until_ts,
         )
 
-    @POST
+    @endpoint(post=True)
     async def purge(self, threshold_ts: int) -> dict[str, Any]:
         """Delete command logs older than threshold.
 

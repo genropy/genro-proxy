@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ...interface.endpoint_base import POST, BaseEndpoint
+from ...interface.endpoint_base import BaseEndpoint, endpoint
 
 if TYPE_CHECKING:
     from .table import TenantsTable
@@ -47,7 +47,7 @@ class TenantEndpoint(BaseEndpoint):
         """
         super().__init__(table)
 
-    @POST
+    @endpoint(post=True)
     async def add(
         self,
         id: str,
@@ -120,7 +120,7 @@ class TenantEndpoint(BaseEndpoint):
         tenants = await self.table.select(where=where, order_by="id")
         return [self.table._decode_active(t) for t in tenants]
 
-    @POST
+    @endpoint(post=True)
     async def delete(self, tenant_id: str) -> int:
         """Delete a tenant and all associated data.
 
@@ -132,7 +132,7 @@ class TenantEndpoint(BaseEndpoint):
         """
         return await self.table.delete(where={"id": tenant_id})
 
-    @POST
+    @endpoint(post=True)
     async def update(
         self,
         tenant_id: str,
@@ -171,7 +171,7 @@ class TenantEndpoint(BaseEndpoint):
 
         return await self.get(tenant_id)
 
-    @POST
+    @endpoint(post=True)
     async def create_api_key(
         self,
         tenant_id: str,

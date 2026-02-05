@@ -260,6 +260,10 @@ def register_endpoint(
         if not callable(method) or not inspect.iscoroutinefunction(method):
             continue
 
+        # Skip methods not available for CLI channel
+        if not endpoint.is_available_for_channel(method_name, "cli"):
+            continue
+
         cmd = _create_click_command(endpoint, method_name, run_async, cli_context)
         cmd.name = method_name.replace("_", "-")
         endpoint_group.add_command(cmd)

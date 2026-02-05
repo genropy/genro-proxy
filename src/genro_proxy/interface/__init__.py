@@ -11,7 +11,7 @@ This package provides base classes for building proxy service interfaces:
 Example:
     ::
 
-        from genro_proxy.interface import BaseEndpoint, POST, register_endpoint
+        from genro_proxy.interface import BaseEndpoint, endpoint, register_endpoint
 
         class ItemEndpoint(BaseEndpoint):
             name = "items"
@@ -19,9 +19,14 @@ Example:
             async def list(self) -> list[dict]:
                 return await self.table.list_all()
 
-            @POST
+            @endpoint(post=True)
             async def add(self, id: str, name: str) -> dict:
                 return await self.table.add({"id": id, "name": name})
+
+            @endpoint(api=False)
+            async def serve(self, host: str = "0.0.0.0") -> None:
+                \"\"\"CLI/REPL only - start the server.\"\"\"
+                ...
 """
 
 from .api_base import (
@@ -35,7 +40,7 @@ from .api_base import (
 )
 from .cli_base import CliManager, console, register_endpoint
 from .cli_context import CliContext
-from .endpoint_base import POST, BaseEndpoint, EndpointManager
+from .endpoint_base import BaseEndpoint, EndpointManager, endpoint
 from .repl import REPLWrapper, repl_wrap, reserved
 
 __all__ = [
@@ -55,7 +60,7 @@ __all__ = [
     # Endpoints
     "BaseEndpoint",
     "EndpointManager",
-    "POST",
+    "endpoint",
     # REPL
     "REPLWrapper",
     "repl_wrap",

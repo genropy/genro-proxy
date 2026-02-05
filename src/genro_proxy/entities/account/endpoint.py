@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ...interface.endpoint_base import POST, BaseEndpoint
+from ...interface.endpoint_base import BaseEndpoint, endpoint
 
 if TYPE_CHECKING:
     from .table import AccountsTable
@@ -57,7 +57,7 @@ class AccountEndpoint(BaseEndpoint):
         """
         super().__init__(table)
 
-    @POST
+    @endpoint(post=True)
     async def add(
         self,
         id: str,
@@ -119,7 +119,7 @@ class AccountEndpoint(BaseEndpoint):
         """
         return await self.table.select(where={"tenant_id": tenant_id}, order_by="id")
 
-    @POST
+    @endpoint(post=True)
     async def delete(self, tenant_id: str, account_id: str) -> int:
         """Delete an account.
 

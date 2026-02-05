@@ -1,31 +1,36 @@
 # Copyright 2025 Softwell S.r.l. - SPDX-License-Identifier: Apache-2.0
 """Base class for endpoint introspection and command dispatch.
 
-This module provides the foundation for automatic API/CLI generation
+This module provides the foundation for automatic API/CLI/REPL generation
 from endpoint classes via method introspection.
 
 Components:
-    POST: Decorator to mark methods as HTTP POST.
+    endpoint: Decorator to configure method channels and HTTP method.
     BaseEndpoint: Base class with introspection capabilities.
     EndpointManager: Discovery and instantiation of endpoints.
 
 Example:
     Define an endpoint::
 
-        from genro_proxy.interface.endpoint_base import BaseEndpoint, POST
+        from genro_proxy.interface.endpoint_base import BaseEndpoint, endpoint
 
         class MyEndpoint(BaseEndpoint):
             name = "items"
 
             async def list(self, active_only: bool = False) -> list[dict]:
-                \"\"\"List all items.\"\"\"
+                \"\"\"List all items (default: all channels, GET).\"\"\"
                 return await self.table.select(where={"active": active_only})
 
-            @POST
+            @endpoint(post=True)
             async def add(self, id: str, name: str) -> dict:
-                \"\"\"Add a new item.\"\"\"
+                \"\"\"Add a new item (POST on all channels).\"\"\"
                 await self.table.insert({"id": id, "name": name})
                 return {"id": id, "name": name}
+
+            @endpoint(api=False)
+            async def serve(self, host: str = "0.0.0.0") -> None:
+                \"\"\"Start server (CLI/REPL only).\"\"\"
+                ...
 
 Note:
     Use EndpointManager.discover() to scan entity packages and instantiate
@@ -50,38 +55,69 @@ class InvalidTokenError(Exception):
     """Raised when API token is invalid (not admin, not valid tenant token)."""
 
 
-def POST(method: Callable) -> Callable:
-    """Decorator to mark an endpoint method as POST.
+def endpoint(
+    *,
+    api: bool | None = None,
+    cli: bool | None = None,
+    repl: bool | None = None,
+    post: bool | None = None,
+) -> Callable[[Callable], Callable]:
+    """Configure endpoint method channels and HTTP method.
 
-    POST methods receive parameters via JSON request body
-    instead of query parameters.
+    When a parameter is None, the class default is used.
+    Class defaults are defined via _default_api, _default_cli, etc.
 
     Args:
-        method: The async method to decorate.
+        api: Expose via REST API. None = use class default.
+        cli: Expose via CLI command. None = use class default.
+        repl: Expose in REPL. None = use class default.
+        post: Use HTTP POST instead of GET. None = use class default.
 
     Returns:
-        The decorated method with _http_post attribute set.
+        Decorator function that sets method attributes.
 
     Example:
         ::
 
-            @POST
+            @endpoint(post=True)
             async def add(self, id: str, data: dict) -> dict:
-                \"\"\"Add item with complex data.\"\"\"
+                \"\"\"POST method on all channels.\"\"\"
+                ...
+
+            @endpoint(api=False)
+            async def serve(self, host: str) -> None:
+                \"\"\"CLI and REPL only.\"\"\"
                 ...
     """
-    method._http_post = True  # type: ignore[attr-defined]
-    return method
+
+    def decorator(method: Callable) -> Callable:
+        if api is not None:
+            method._endpoint_api = api  # type: ignore[attr-defined]
+        if cli is not None:
+            method._endpoint_cli = cli  # type: ignore[attr-defined]
+        if repl is not None:
+            method._endpoint_repl = repl  # type: ignore[attr-defined]
+        if post is not None:
+            method._endpoint_post = post  # type: ignore[attr-defined]
+        return method
+
+    return decorator
 
 
 class BaseEndpoint:
     """Base class for all endpoints with introspection capabilities.
 
     Provides method discovery, HTTP method inference, and Pydantic model
-    generation from signatures for automatic API/CLI generation.
+    generation from signatures for automatic API/CLI/REPL generation.
 
-    Attributes:
+    Class Attributes (defaults for all methods):
         name: Endpoint name used in URL paths and CLI groups.
+        _default_api: Expose methods via REST API (default True).
+        _default_cli: Expose methods via CLI (default True).
+        _default_repl: Expose methods in REPL (default True).
+        _default_post: Use HTTP POST (default False, i.e. GET).
+
+    Instance Attributes:
         table: Database table instance for operations.
 
     Example:
@@ -96,16 +132,31 @@ class BaseEndpoint:
                         raise ValueError(f"Item '{item_id}' not found")
                     return item
 
-                @POST
+                @endpoint(post=True)
                 async def add(self, id: str, name: str) -> dict:
                     return await self.table.add({"id": id, "name": name})
 
             # Register with FastAPI
             endpoint = ItemEndpoint(db.table("items"))
             register_endpoint(app, endpoint)
+
+        CLI-only endpoint::
+
+            class ProxyEndpoint(BaseEndpoint):
+                name = "proxy"
+                _default_api = False  # CLI/REPL only by default
+
+                async def serve(self, host: str = "0.0.0.0") -> None:
+                    ...
     """
 
     name: str = ""
+
+    # Class-level defaults for method channel availability
+    _default_api: bool = True
+    _default_cli: bool = True
+    _default_repl: bool = True
+    _default_post: bool = False
 
     def __init__(self, table: Any):
         """Initialize endpoint with table reference.
@@ -142,7 +193,7 @@ class BaseEndpoint:
         except RecordNotFoundError:
             raise ValueError(f"{self.name} '{id}' not found")
 
-    @POST
+    @endpoint(post=True)
     async def add(self, id: str, **data: Any) -> dict[str, Any]:
         """Add new record.
 
@@ -158,7 +209,7 @@ class BaseEndpoint:
         await self.table.insert(record)
         return record
 
-    @POST
+    @endpoint(post=True)
     async def delete(self, id: str) -> bool:
         """Delete record by primary key.
 
@@ -200,16 +251,42 @@ class BaseEndpoint:
     def get_http_method(self, method_name: str) -> str:
         """Determine HTTP method for an endpoint method.
 
+        Checks method attribute first, then falls back to class default.
+
         Args:
             method_name: Name of the endpoint method.
 
         Returns:
-            "POST" if decorated with @POST, otherwise "GET".
+            "POST" if post=True, otherwise "GET".
         """
         method = getattr(self, method_name)
-        if getattr(method, "_http_post", False):
-            return "POST"
-        return "GET"
+        # Check method-level setting first
+        if hasattr(method, "_endpoint_post"):
+            return "POST" if method._endpoint_post else "GET"
+        # Fall back to class default
+        return "POST" if self._default_post else "GET"
+
+    def is_available_for_channel(self, method_name: str, channel: str) -> bool:
+        """Check if method is available for a specific channel.
+
+        Checks method attribute first, then falls back to class default.
+
+        Args:
+            method_name: Name of the endpoint method.
+            channel: One of "api", "cli", "repl".
+
+        Returns:
+            True if method should be exposed on this channel.
+        """
+        method = getattr(self, method_name)
+        attr_name = f"_endpoint_{channel}"
+        default_name = f"_default_{channel}"
+
+        # Check method-level setting first
+        if hasattr(method, attr_name):
+            return getattr(method, attr_name)
+        # Fall back to class default
+        return getattr(self, default_name, True)
 
     def create_request_model(self, method_name: str) -> type:
         """Create Pydantic model from method signature.
@@ -550,4 +627,4 @@ class EndpointManager:
         return self._endpoints.items()
 
 
-__all__ = ["BaseEndpoint", "EndpointManager", "InvalidTokenError", "POST"]
+__all__ = ["BaseEndpoint", "EndpointManager", "InvalidTokenError", "endpoint"]

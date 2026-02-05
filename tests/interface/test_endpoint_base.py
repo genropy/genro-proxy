@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from genro_proxy.interface.endpoint_base import POST, BaseEndpoint
+from genro_proxy.interface.endpoint_base import BaseEndpoint, endpoint
 
 
 class MockDb:
@@ -60,28 +60,59 @@ class MockTable:
             self._deleted.append(where["id"])
 
 
-class TestPOSTDecorator:
-    """Tests for POST decorator."""
+class TestEndpointDecorator:
+    """Tests for endpoint decorator."""
 
     def test_marks_method_as_post(self):
-        """POST decorator should set _http_post attribute."""
+        """endpoint(post=True) should set _endpoint_post attribute."""
 
-        @POST
+        @endpoint(post=True)
         async def my_method():
             pass
 
-        assert hasattr(my_method, "_http_post")
-        assert my_method._http_post is True
+        assert hasattr(my_method, "_endpoint_post")
+        assert my_method._endpoint_post is True
 
     def test_preserves_function(self):
-        """POST decorator should not change function behavior."""
+        """endpoint decorator should not change function behavior."""
 
-        @POST
+        @endpoint(post=True)
         async def my_method(x: int) -> int:
             return x * 2
 
         assert my_method.__name__ == "my_method"
         assert inspect.iscoroutinefunction(my_method)
+
+    def test_marks_api_channel(self):
+        """endpoint(api=False) should set _endpoint_api attribute."""
+
+        @endpoint(api=False)
+        async def my_method():
+            pass
+
+        assert hasattr(my_method, "_endpoint_api")
+        assert my_method._endpoint_api is False
+
+    def test_marks_cli_channel(self):
+        """endpoint(cli=False) should set _endpoint_cli attribute."""
+
+        @endpoint(cli=False)
+        async def my_method():
+            pass
+
+        assert hasattr(my_method, "_endpoint_cli")
+        assert my_method._endpoint_cli is False
+
+    def test_marks_multiple_attributes(self):
+        """endpoint can set multiple attributes at once."""
+
+        @endpoint(post=True, api=True, cli=False)
+        async def my_method():
+            pass
+
+        assert my_method._endpoint_post is True
+        assert my_method._endpoint_api is True
+        assert my_method._endpoint_cli is False
 
 
 class SampleEndpoint(BaseEndpoint):
@@ -97,7 +128,7 @@ class SampleEndpoint(BaseEndpoint):
         """Get a sample by ID."""
         return await self.table.get(sample_id)
 
-    @POST
+    @endpoint(post=True)
     async def add(self, id: str, name: str, data: dict | None = None) -> dict:
         """Add a new sample."""
         return {"id": id, "name": name}

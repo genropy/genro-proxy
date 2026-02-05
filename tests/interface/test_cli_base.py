@@ -1,21 +1,21 @@
 # Copyright 2025 Softwell S.r.l. - SPDX-License-Identifier: Apache-2.0
-"""Tests for CLI command generation from endpoints."""
+"""Tests for CLI command generation from endpoints.
 
-import asyncio
+Note: CLI functionality is tested through the exposed surface (CliRunner)
+in integration tests. This module tests utility functions and CliManager.
+"""
+
 import inspect
 from typing import Literal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import click
 import pytest
-from click.testing import CliRunner
 
 from genro_proxy.interface.cli_base import (
     CliManager,
     _annotation_to_click_type,
-    _create_click_command,
     _print_result,
-    register_endpoint,
 )
 
 
@@ -73,7 +73,7 @@ class TestAnnotationToClickType:
 class TestPrintResult:
     """Tests for _print_result function."""
 
-    def test_print_dict(self, capsys):
+    def test_print_dict(self):
         """Print dict as key-value pairs."""
         with patch("genro_proxy.interface.cli_base.console") as mock_console:
             _print_result({"key1": "value1", "key2": "value2"})
@@ -102,200 +102,6 @@ class TestPrintResult:
         with patch("genro_proxy.interface.cli_base.console") as mock_console:
             _print_result([])
             mock_console.print.assert_not_called()
-
-
-class TestCreateClickCommand:
-    """Tests for _create_click_command function."""
-
-    def test_creates_command_for_simple_method(self):
-        """Create command for method with no parameters."""
-        class TestEndpoint:
-            name = "test"
-
-            async def simple(self):
-                """Simple method."""
-                return {"ok": True}
-
-            async def invoke(self, method_name, params):
-                return await getattr(self, method_name)(**params)
-
-        endpoint = TestEndpoint()
-        cmd = _create_click_command(endpoint, "simple", asyncio.run)
-
-        assert isinstance(cmd, click.Command)
-        assert cmd.help == "Simple method."
-
-    def test_creates_command_with_required_params(self):
-        """Create command with required positional arguments."""
-        class TestEndpoint:
-            name = "test"
-
-            async def with_args(self, id: str, name: str):
-                """Method with args."""
-                return {"id": id, "name": name}
-
-            async def invoke(self, method_name, params):
-                return await getattr(self, method_name)(**params)
-
-        endpoint = TestEndpoint()
-        cmd = _create_click_command(endpoint, "with_args", asyncio.run)
-
-        # Check that arguments were created
-        assert len(cmd.params) == 2
-
-    def test_creates_command_with_optional_params(self):
-        """Create command with optional parameters as options."""
-        class TestEndpoint:
-            name = "test"
-
-            async def with_options(self, name: str = "default"):
-                """Method with options."""
-                return {"name": name}
-
-            async def invoke(self, method_name, params):
-                return await getattr(self, method_name)(**params)
-
-        endpoint = TestEndpoint()
-        cmd = _create_click_command(endpoint, "with_options", asyncio.run)
-
-        # Check that option was created
-        assert len(cmd.params) == 1
-        assert cmd.params[0].default == "default"
-
-    def test_creates_command_with_bool_flag(self):
-        """Create command with boolean flag."""
-        class TestEndpoint:
-            name = "test"
-
-            async def with_flag(self, enabled: bool = False):
-                """Method with flag."""
-                return {"enabled": enabled}
-
-            async def invoke(self, method_name, params):
-                return await getattr(self, method_name)(**params)
-
-        endpoint = TestEndpoint()
-        cmd = _create_click_command(endpoint, "with_flag", asyncio.run)
-
-        # Check that flag was created
-        assert len(cmd.params) == 1
-
-    def test_tenant_id_becomes_optional_positional(self):
-        """tenant_id becomes optional positional with context fallback."""
-        class TestEndpoint:
-            name = "test"
-
-            async def with_tenant(self, tenant_id: str):
-                """Method requiring tenant."""
-                return {"tenant_id": tenant_id}
-
-            async def invoke(self, method_name, params):
-                return await getattr(self, method_name)(**params)
-
-        endpoint = TestEndpoint()
-        cmd = _create_click_command(endpoint, "with_tenant", asyncio.run)
-
-        # Check that tenant_id is optional
-        assert len(cmd.params) == 1
-        assert cmd.params[0].required is False
-
-
-class TestRegisterEndpoint:
-    """Tests for register_endpoint function."""
-
-    def test_registers_endpoint_as_group(self):
-        """Register endpoint creates a subgroup."""
-        class TestEndpoint:
-            name = "myendpoint"
-
-            async def list(self):
-                """List items."""
-                return []
-
-        @click.group()
-        def cli():
-            pass
-
-        endpoint = TestEndpoint()
-        register_endpoint(cli, endpoint)
-
-        # Check that subgroup was created
-        assert "myendpoint" in cli.commands
-
-    def test_registers_all_async_methods(self):
-        """Register all async methods as commands."""
-        class TestEndpoint:
-            name = "items"
-
-            async def list(self):
-                """List items."""
-                return []
-
-            async def get(self, id: str):
-                """Get item."""
-                return {}
-
-            async def add(self, name: str):
-                """Add item."""
-                return {}
-
-            def sync_method(self):
-                """Sync method should be ignored."""
-                pass
-
-            async def invoke(self, method_name, params):
-                return await getattr(self, method_name)(**params)
-
-        @click.group()
-        def cli():
-            pass
-
-        endpoint = TestEndpoint()
-        register_endpoint(cli, endpoint)
-
-        group = cli.commands["items"]
-        # Should have list, get, add, invoke - but not sync_method
-        assert "list" in group.commands
-        assert "get" in group.commands
-        assert "add" in group.commands
-        assert "sync-method" not in group.commands
-
-    def test_uses_class_name_if_no_name_attr(self):
-        """Use class name lowercased if no name attribute."""
-        class MyCustomEndpoint:
-            async def test(self):
-                return {}
-
-        @click.group()
-        def cli():
-            pass
-
-        endpoint = MyCustomEndpoint()
-        register_endpoint(cli, endpoint)
-
-        assert "mycustomendpoint" in cli.commands
-
-    def test_replaces_underscores_with_dashes(self):
-        """Method names with underscores become dashed commands."""
-        class TestEndpoint:
-            name = "test"
-
-            async def get_all_items(self):
-                """Get all items."""
-                return []
-
-            async def invoke(self, method_name, params):
-                return await getattr(self, method_name)(**params)
-
-        @click.group()
-        def cli():
-            pass
-
-        endpoint = TestEndpoint()
-        register_endpoint(cli, endpoint)
-
-        group = cli.commands["test"]
-        assert "get-all-items" in group.commands
 
 
 class TestCliManager:
@@ -349,57 +155,3 @@ class TestCliManager:
         proxy = MagicMock()
         manager = CliManager(proxy)
         assert manager._get_server_module() == "genro_proxy.server:app"
-
-
-class TestCliIntegration:
-    """Integration tests using CliRunner."""
-
-    def test_command_execution(self):
-        """Test actual command execution with CliRunner."""
-        class TestEndpoint:
-            name = "test"
-
-            async def hello(self, name: str = "World"):
-                """Say hello."""
-                return {"message": f"Hello, {name}!"}
-
-            async def invoke(self, method_name, params):
-                return await getattr(self, method_name)(**params)
-
-        @click.group()
-        def cli():
-            pass
-
-        endpoint = TestEndpoint()
-        register_endpoint(cli, endpoint)
-
-        runner = CliRunner()
-        result = runner.invoke(cli, ["test", "hello", "--name", "Test"])
-
-        assert result.exit_code == 0
-        assert "Hello" in result.output
-
-    def test_command_with_positional_args(self):
-        """Test command with positional arguments."""
-        class TestEndpoint:
-            name = "items"
-
-            async def get(self, id: str):
-                """Get item by ID."""
-                return {"id": id}
-
-            async def invoke(self, method_name, params):
-                return await getattr(self, method_name)(**params)
-
-        @click.group()
-        def cli():
-            pass
-
-        endpoint = TestEndpoint()
-        register_endpoint(cli, endpoint)
-
-        runner = CliRunner()
-        result = runner.invoke(cli, ["items", "get", "item-123"])
-
-        assert result.exit_code == 0
-        assert "item-123" in result.output

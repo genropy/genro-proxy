@@ -11,7 +11,7 @@ from fastapi import APIRouter
 from fastapi.testclient import TestClient
 
 from genro_proxy.interface.api_base import register_api_endpoint
-from genro_proxy.interface.endpoint_base import POST, BaseEndpoint
+from genro_proxy.interface.endpoint_base import BaseEndpoint, endpoint
 
 
 class MockTenantsTableForDb:
@@ -71,85 +71,85 @@ class SampleEndpoint(BaseEndpoint):
             raise ValueError(f"Sample '{id}' not found")
         return result
 
-    @POST
+    @endpoint(post=True)
     async def add(self, id: str, name: str) -> dict:
         """Add a new sample."""
         return {"id": id, "name": name}
 
-    @POST
+    @endpoint(post=True)
     async def delete(self, id: str) -> bool:
         """Delete a sample."""
         return True
 
 
 @pytest.fixture
-def endpoint():
+def fxt_endpoint():
     """Create sample endpoint."""
     return SampleEndpoint(MockTable())
 
 
 @pytest.fixture
-def app(endpoint):
+def fxt_app(fxt_endpoint):
     """Create FastAPI app with endpoint routes."""
     from fastapi import FastAPI
 
     app = FastAPI()
     router = APIRouter(prefix="/api")
-    register_api_endpoint(router, endpoint)
+    register_api_endpoint(router, fxt_endpoint)
     app.include_router(router)
     return app
 
 
 @pytest.fixture
-def client(app):
+def fxt_client(fxt_app):
     """Create test client."""
-    return TestClient(app)
+    return TestClient(fxt_app)
 
 
 class TestRegisterApiEndpoint:
     """Tests for register_api_endpoint function."""
 
-    def test_creates_get_routes(self, client):
+    def test_creates_get_routes(self, fxt_client):
         """GET methods should create GET routes."""
-        response = client.get("/api/samples/list")
+        response = fxt_client.get("/api/samples/list")
         assert response.status_code == 200
         data = response.json()
         assert "data" in data
         assert isinstance(data["data"], list)
 
-    def test_creates_post_routes(self, client):
+    def test_creates_post_routes(self, fxt_client):
         """POST methods should create POST routes."""
-        response = client.post("/api/samples/add", json={"id": "1", "name": "test"})
+        response = fxt_client.post("/api/samples/add", json={"id": "1", "name": "test"})
         assert response.status_code == 200
         data = response.json()
         assert data["data"] == {"id": "1", "name": "test"}
 
-    def test_get_with_query_params(self, client):
+    def test_get_with_query_params(self, fxt_client):
         """GET routes should accept query params."""
-        response = client.get("/api/samples/get?id=123")
+        response = fxt_client.get("/api/samples/get?id=123")
         assert response.status_code == 200
         data = response.json()
         assert data["data"]["id"] == "1"  # From mock
 
-    def test_post_validates_body(self, client):
+    def test_post_validates_body(self, fxt_client):
         """POST routes should validate request body."""
         # Missing required 'name' param
-        response = client.post("/api/samples/add", json={"id": "1"})
+        response = fxt_client.post("/api/samples/add", json={"id": "1"})
         assert response.status_code == 422
         assert "error" in response.json()
 
-    def test_method_not_found_returns_404(self, client, endpoint):
+    def test_method_not_found_returns_404(self, fxt_client, fxt_endpoint):
         """ValueError from endpoint should return 404."""
         # Override record to return {} (not found)
-        endpoint.table.record = AsyncMock(return_value={})
-        response = client.get("/api/samples/get?id=nonexistent")
+        fxt_endpoint.table.record = AsyncMock(return_value={})
+        response = fxt_client.get("/api/samples/get?id=nonexistent")
         assert response.status_code == 404
         assert "not found" in response.json()["error"]
 
-    def test_replaces_underscores_with_dashes(self, app):
+    def test_replaces_underscores_with_dashes(self, fxt_app):
         """Method names with underscores should use dashes in path."""
         # Check routes exist
-        routes = [r.path for r in app.routes]
+        routes = [r.path for r in fxt_app.routes]
         # Method 'delete' becomes '/api/samples/delete'
         assert "/api/samples/delete" in routes
 
@@ -157,20 +157,20 @@ class TestRegisterApiEndpoint:
 class TestApiValidation:
     """Tests for API Pydantic validation."""
 
-    def test_type_coercion(self, client):
+    def test_type_coercion(self, fxt_client):
         """API should coerce types via Pydantic."""
         # id and name are strings, should work even if sent as different types
-        response = client.post("/api/samples/add", json={"id": "1", "name": "test"})
+        response = fxt_client.post("/api/samples/add", json={"id": "1", "name": "test"})
         assert response.status_code == 200
 
-    def test_empty_body_for_no_params(self, client):
+    def test_empty_body_for_no_params(self, fxt_client):
         """Methods without params should work with empty body."""
-        response = client.get("/api/samples/list")
+        response = fxt_client.get("/api/samples/list")
         assert response.status_code == 200
 
-    def test_post_with_empty_body_validates(self, client):
+    def test_post_with_empty_body_validates(self, fxt_client):
         """POST with empty body should still validate required params."""
-        response = client.post("/api/samples/add", json={})
+        response = fxt_client.post("/api/samples/add", json={})
         assert response.status_code == 422
 
 
@@ -183,7 +183,7 @@ class TestApiAuthentication:
     """Tests for API authentication with X-API-Token header."""
 
     @pytest.fixture
-    def app_with_auth(self, endpoint):
+    def fxt_app_with_auth(self, fxt_endpoint):
         """Create FastAPI app with authentication enabled."""
         from fastapi import FastAPI
 
@@ -193,7 +193,7 @@ class TestApiAuthentication:
         app.state.api_token = "secret-admin-token"
 
         router = APIRouter(prefix="/api", dependencies=[auth_dependency])
-        register_api_endpoint(router, endpoint)
+        register_api_endpoint(router, fxt_endpoint)
         app.include_router(router)
 
         # Health endpoint without auth
@@ -204,43 +204,43 @@ class TestApiAuthentication:
         return app
 
     @pytest.fixture
-    def auth_client(self, app_with_auth):
+    def fxt_auth_client(self, fxt_app_with_auth):
         """Create test client for authenticated app."""
-        return TestClient(app_with_auth)
+        return TestClient(fxt_app_with_auth)
 
-    def test_health_no_auth_required(self, auth_client):
+    def test_health_no_auth_required(self, fxt_auth_client):
         """Health endpoint should not require authentication."""
-        response = auth_client.get("/health")
+        response = fxt_auth_client.get("/health")
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
 
-    def test_api_without_token_returns_401(self, auth_client):
+    def test_api_without_token_returns_401(self, fxt_auth_client):
         """API calls without token should return 401."""
-        response = auth_client.get("/api/samples/list")
+        response = fxt_auth_client.get("/api/samples/list")
         assert response.status_code == 401
         assert "Missing API token" in response.json()["detail"]
 
-    def test_api_with_invalid_token_returns_401(self, auth_client):
+    def test_api_with_invalid_token_returns_401(self, fxt_auth_client):
         """API calls with invalid token should return 401."""
-        response = auth_client.get(
+        response = fxt_auth_client.get(
             "/api/samples/list",
             headers={"X-API-Token": "wrong-token"},
         )
         assert response.status_code == 401
         assert "Invalid API token" in response.json()["detail"]
 
-    def test_api_with_valid_token_succeeds(self, auth_client):
+    def test_api_with_valid_token_succeeds(self, fxt_auth_client):
         """API calls with valid admin token should succeed."""
-        response = auth_client.get(
+        response = fxt_auth_client.get(
             "/api/samples/list",
             headers={"X-API-Token": "secret-admin-token"},
         )
         assert response.status_code == 200
         assert "data" in response.json()
 
-    def test_post_with_valid_token_succeeds(self, auth_client):
+    def test_post_with_valid_token_succeeds(self, fxt_auth_client):
         """POST requests with valid token should succeed."""
-        response = auth_client.post(
+        response = fxt_auth_client.post(
             "/api/samples/add",
             json={"id": "1", "name": "test"},
             headers={"X-API-Token": "secret-admin-token"},
@@ -252,7 +252,7 @@ class TestApiNoAuth:
     """Tests for API without authentication configured."""
 
     @pytest.fixture
-    def app_no_auth(self, endpoint):
+    def fxt_app_no_auth(self, fxt_endpoint):
         """Create FastAPI app without authentication (api_token=None)."""
         from fastapi import FastAPI
 
@@ -262,25 +262,25 @@ class TestApiNoAuth:
         app.state.api_token = None  # No auth
 
         router = APIRouter(prefix="/api", dependencies=[auth_dependency])
-        register_api_endpoint(router, endpoint)
+        register_api_endpoint(router, fxt_endpoint)
         app.include_router(router)
         return app
 
     @pytest.fixture
-    def no_auth_client(self, app_no_auth):
+    def fxt_no_auth_client(self, fxt_app_no_auth):
         """Create test client for app without auth."""
-        return TestClient(app_no_auth)
+        return TestClient(fxt_app_no_auth)
 
-    def test_api_without_token_allowed(self, no_auth_client):
+    def test_api_without_token_allowed(self, fxt_no_auth_client):
         """When api_token=None, requests without token should work."""
-        response = no_auth_client.get("/api/samples/list")
+        response = fxt_no_auth_client.get("/api/samples/list")
         assert response.status_code == 200
 
-    def test_api_with_random_token_rejected(self, no_auth_client):
+    def test_api_with_random_token_rejected(self, fxt_no_auth_client):
         """When api_token=None but token provided, it's still validated."""
         # Even without global token configured, a provided token is validated
         # against tenant tokens. Random tokens will be rejected.
-        response = no_auth_client.get(
+        response = fxt_no_auth_client.get(
             "/api/samples/list",
             headers={"X-API-Token": "random-token"},
         )
@@ -297,7 +297,7 @@ class TestApiAdminAuthentication:
     """Tests for admin-only authentication with require_admin_token."""
 
     @pytest.fixture
-    def app_with_admin_auth(self, endpoint):
+    def fxt_app_with_admin_auth(self, fxt_endpoint):
         """Create FastAPI app with admin-only authentication."""
         from fastapi import FastAPI
 
@@ -307,33 +307,33 @@ class TestApiAdminAuthentication:
         app.state.api_token = "admin-secret-token"
 
         router = APIRouter(prefix="/admin", dependencies=[admin_dependency])
-        register_api_endpoint(router, endpoint)
+        register_api_endpoint(router, fxt_endpoint)
         app.include_router(router)
         return app
 
     @pytest.fixture
-    def admin_client(self, app_with_admin_auth):
+    def fxt_admin_client(self, fxt_app_with_admin_auth):
         """Create test client for admin app."""
-        return TestClient(app_with_admin_auth)
+        return TestClient(fxt_app_with_admin_auth)
 
-    def test_admin_without_token_returns_401(self, admin_client):
+    def test_admin_without_token_returns_401(self, fxt_admin_client):
         """Admin endpoints without token should return 401."""
-        response = admin_client.get("/admin/samples/list")
+        response = fxt_admin_client.get("/admin/samples/list")
         assert response.status_code == 401
         assert "Admin token required" in response.json()["detail"]
 
-    def test_admin_with_invalid_token_returns_401(self, admin_client):
+    def test_admin_with_invalid_token_returns_401(self, fxt_admin_client):
         """Admin endpoints with invalid token should return 401."""
-        response = admin_client.get(
+        response = fxt_admin_client.get(
             "/admin/samples/list",
             headers={"X-API-Token": "wrong-token"},
         )
         assert response.status_code == 401
         assert "Invalid API token" in response.json()["detail"]
 
-    def test_admin_with_valid_token_succeeds(self, admin_client):
+    def test_admin_with_valid_token_succeeds(self, fxt_admin_client):
         """Admin endpoints with valid admin token should succeed."""
-        response = admin_client.get(
+        response = fxt_admin_client.get(
             "/admin/samples/list",
             headers={"X-API-Token": "admin-secret-token"},
         )
@@ -344,7 +344,7 @@ class TestApiAdminNoAuth:
     """Tests for admin endpoints without auth configured."""
 
     @pytest.fixture
-    def app_admin_no_auth(self, endpoint):
+    def fxt_app_admin_no_auth(self, fxt_endpoint):
         """Create FastAPI app with admin dependency but no token configured."""
         from fastapi import FastAPI
 
@@ -354,18 +354,18 @@ class TestApiAdminNoAuth:
         app.state.api_token = None  # No auth
 
         router = APIRouter(prefix="/admin", dependencies=[admin_dependency])
-        register_api_endpoint(router, endpoint)
+        register_api_endpoint(router, fxt_endpoint)
         app.include_router(router)
         return app
 
     @pytest.fixture
-    def admin_no_auth_client(self, app_admin_no_auth):
+    def fxt_admin_no_auth_client(self, fxt_app_admin_no_auth):
         """Create test client."""
-        return TestClient(app_admin_no_auth)
+        return TestClient(fxt_app_admin_no_auth)
 
-    def test_admin_no_auth_allows_without_token(self, admin_no_auth_client):
+    def test_admin_no_auth_allows_without_token(self, fxt_admin_no_auth_client):
         """When api_token=None, admin endpoints allow access without token."""
-        response = admin_no_auth_client.get("/admin/samples/list")
+        response = fxt_admin_no_auth_client.get("/admin/samples/list")
         assert response.status_code == 200
 
 
@@ -378,13 +378,13 @@ class TestApiTenantAuthentication:
     """Tests for tenant token authentication."""
 
     @pytest.fixture
-    def endpoint_with_tenant(self):
+    def fxt_endpoint_with_tenant(self):
         """Create endpoint with tenant token support."""
         tenant_tokens = {"tenant-secret-token": {"id": "acme", "name": "ACME Corp"}}
         return SampleEndpoint(MockTable(tenant_tokens))
 
     @pytest.fixture
-    def app_with_tenant_auth(self, endpoint_with_tenant):
+    def fxt_app_with_tenant_auth(self, fxt_endpoint_with_tenant):
         """Create FastAPI app with tenant authentication enabled."""
         from fastapi import FastAPI
 
@@ -394,34 +394,34 @@ class TestApiTenantAuthentication:
         app.state.api_token = "admin-secret-token"
 
         router = APIRouter(prefix="/api", dependencies=[auth_dependency])
-        register_api_endpoint(router, endpoint_with_tenant)
+        register_api_endpoint(router, fxt_endpoint_with_tenant)
         app.include_router(router)
         return app
 
     @pytest.fixture
-    def tenant_client(self, app_with_tenant_auth):
+    def fxt_tenant_client(self, fxt_app_with_tenant_auth):
         """Create test client for tenant auth app."""
-        return TestClient(app_with_tenant_auth)
+        return TestClient(fxt_app_with_tenant_auth)
 
-    def test_tenant_token_allows_access(self, tenant_client):
+    def test_tenant_token_allows_access(self, fxt_tenant_client):
         """Valid tenant token should allow API access."""
-        response = tenant_client.get(
+        response = fxt_tenant_client.get(
             "/api/samples/list",
             headers={"X-API-Token": "tenant-secret-token"},
         )
         assert response.status_code == 200
 
-    def test_admin_token_still_works(self, tenant_client):
+    def test_admin_token_still_works(self, fxt_tenant_client):
         """Admin token should still work."""
-        response = tenant_client.get(
+        response = fxt_tenant_client.get(
             "/api/samples/list",
             headers={"X-API-Token": "admin-secret-token"},
         )
         assert response.status_code == 200
 
-    def test_invalid_token_rejected(self, tenant_client):
+    def test_invalid_token_rejected(self, fxt_tenant_client):
         """Invalid token should be rejected."""
-        response = tenant_client.get(
+        response = fxt_tenant_client.get(
             "/api/samples/list",
             headers={"X-API-Token": "invalid-token"},
         )
@@ -432,7 +432,7 @@ class TestApiAdminTenantToken:
     """Tests for tenant token on admin endpoints."""
 
     @pytest.fixture
-    def mock_tenants_table(self):
+    def fxt_mock_tenants_table(self):
         """Create mock tenants table."""
 
         class MockTenantsTable:
@@ -444,7 +444,7 @@ class TestApiAdminTenantToken:
         return MockTenantsTable()
 
     @pytest.fixture
-    def mock_proxy(self, mock_tenants_table):
+    def fxt_mock_proxy(self, fxt_mock_tenants_table):
         """Create mock proxy."""
 
         class MockDb:
@@ -458,34 +458,34 @@ class TestApiAdminTenantToken:
             def __init__(self, tenants_table):
                 self.db = MockDb(tenants_table)
 
-        return MockProxy(mock_tenants_table)
+        return MockProxy(fxt_mock_tenants_table)
 
     @pytest.fixture
-    def app_with_admin_tenant(self, endpoint, mock_proxy, monkeypatch):
+    def fxt_app_with_admin_tenant(self, fxt_endpoint, fxt_mock_proxy, monkeypatch):
         """Create app with admin dependency and tenant support."""
         from fastapi import FastAPI
 
         from genro_proxy.interface import api_base
         from genro_proxy.interface.api_base import admin_dependency, register_api_endpoint
 
-        monkeypatch.setattr(api_base, "_proxy", mock_proxy)
+        monkeypatch.setattr(api_base, "_proxy", fxt_mock_proxy)
 
         app = FastAPI()
         app.state.api_token = "admin-token"
 
         router = APIRouter(prefix="/admin", dependencies=[admin_dependency])
-        register_api_endpoint(router, endpoint)
+        register_api_endpoint(router, fxt_endpoint)
         app.include_router(router)
         return app
 
     @pytest.fixture
-    def admin_tenant_client(self, app_with_admin_tenant):
+    def fxt_admin_tenant_client(self, fxt_app_with_admin_tenant):
         """Create test client."""
-        return TestClient(app_with_admin_tenant)
+        return TestClient(fxt_app_with_admin_tenant)
 
-    def test_tenant_token_forbidden_on_admin(self, admin_tenant_client):
+    def test_tenant_token_forbidden_on_admin(self, fxt_admin_tenant_client):
         """Tenant token should be forbidden on admin endpoints."""
-        response = admin_tenant_client.get(
+        response = fxt_admin_tenant_client.get(
             "/admin/samples/list",
             headers={"X-API-Token": "tenant-token"},
         )
@@ -497,7 +497,7 @@ class TestApiRouteErrors:
     """Tests for API route error handling."""
 
     @pytest.fixture
-    def error_endpoint(self):
+    def fxt_error_endpoint(self):
         """Create endpoint that raises different errors."""
 
         class ErrorEndpoint(BaseEndpoint):
@@ -507,7 +507,7 @@ class TestApiRouteErrors:
                 """Raise a server error."""
                 raise RuntimeError("Internal server error")
 
-            @POST
+            @endpoint(post=True)
             async def post_server_error(self) -> dict:
                 """POST that raises server error."""
                 raise RuntimeError("Internal server error")
@@ -515,36 +515,36 @@ class TestApiRouteErrors:
         return ErrorEndpoint(MockTable())
 
     @pytest.fixture
-    def error_app(self, error_endpoint):
+    def fxt_error_app(self, fxt_error_endpoint):
         """Create app with error endpoint."""
         from fastapi import FastAPI
 
         app = FastAPI()
         router = APIRouter(prefix="/api")
-        register_api_endpoint(router, error_endpoint)
+        register_api_endpoint(router, fxt_error_endpoint)
         app.include_router(router)
         return app
 
     @pytest.fixture
-    def error_client(self, error_app):
+    def fxt_error_client(self, fxt_error_app):
         """Create test client."""
-        return TestClient(error_app)
+        return TestClient(fxt_error_app)
 
-    def test_get_server_error_returns_500(self, error_client):
+    def test_get_server_error_returns_500(self, fxt_error_client):
         """GET route server error should return 500."""
-        response = error_client.get("/api/errors/server-error")
+        response = fxt_error_client.get("/api/errors/server-error")
         assert response.status_code == 500
         assert "Internal server error" in response.json()["error"]
 
-    def test_post_server_error_returns_500(self, error_client):
+    def test_post_server_error_returns_500(self, fxt_error_client):
         """POST route server error should return 500."""
-        response = error_client.post("/api/errors/post-server-error", json={})
+        response = fxt_error_client.post("/api/errors/post-server-error", json={})
         assert response.status_code == 500
         assert "Internal server error" in response.json()["error"]
 
-    def test_post_with_invalid_json(self, client):
+    def test_post_with_invalid_json(self, fxt_client):
         """POST with invalid JSON body should handle gracefully."""
-        response = client.post(
+        response = fxt_client.post(
             "/api/samples/add",
             content="not json",
             headers={"Content-Type": "application/json"},
