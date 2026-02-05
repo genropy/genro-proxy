@@ -363,7 +363,7 @@ Endpoints expose Table operations via API and CLI.
 ```python
 # src/genro_myproxy/entities/my_entity/endpoint.py
 from typing import Any
-from genro_proxy.interface.endpoint_base import BaseEndpoint, POST
+from genro_proxy.interface import BaseEndpoint, endpoint
 
 
 class MyEntityEndpoint(BaseEndpoint):
@@ -371,7 +371,7 @@ class MyEntityEndpoint(BaseEndpoint):
 
     name = "my_entities"  # URL path and CLI group name
 
-    # GET methods (query params)
+    # GET methods (default)
     async def list(self, tenant_id: str) -> list[dict]:
         """List all entities for a tenant."""
         return await self.table.select(where={"tenant_id": tenant_id})
@@ -383,7 +383,7 @@ class MyEntityEndpoint(BaseEndpoint):
         )
 
     # POST methods (JSON body)
-    @POST
+    @endpoint(post=True)
     async def add(
         self,
         tenant_id: str,
@@ -401,26 +401,104 @@ class MyEntityEndpoint(BaseEndpoint):
 
         return await self.get(tenant_id, id)
 
-    @POST
+    @endpoint(post=True)
     async def delete(self, tenant_id: str, entity_id: str) -> int:
         """Delete an entity."""
         return await self.table.delete(
             where={"tenant_id": tenant_id, "id": entity_id}
         )
+
+    # CLI-only method (not exposed via REST API)
+    @endpoint(api=False)
+    async def import_from_file(self, tenant_id: str, path: str) -> dict:
+        """Import entities from a file (CLI only)."""
+        # ... implementation ...
+        return {"imported": 10}
+
+    # API-only method (not exposed via CLI)
+    @endpoint(cli=False)
+    async def internal_sync(self, tenant_id: str) -> dict:
+        """Internal sync endpoint (API only)."""
+        return {"synced": True}
 ```
+
+### The @endpoint() Decorator
+
+The `@endpoint()` decorator configures how methods are exposed:
+
+```python
+from genro_proxy.interface import endpoint
+
+# POST method (receives params from JSON body)
+@endpoint(post=True)
+async def add(self, ...): ...
+
+# CLI-only method (not exposed via REST API)
+@endpoint(api=False)
+async def serve(self, ...): ...
+
+# API-only method (not exposed via CLI)
+@endpoint(cli=False)
+async def webhook(self, ...): ...
+
+# REPL-only method
+@endpoint(api=False, cli=False, repl=True)
+async def debug_info(self, ...): ...
+
+# Multiple options combined
+@endpoint(post=True, cli=False)
+async def batch_update(self, ...): ...
+```
+
+**Decorator parameters:**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `post` | `False` | Use POST method (params from JSON body) instead of GET (query params) |
+| `api` | `True` | Expose method via REST API |
+| `cli` | `True` | Expose method via CLI commands |
+| `repl` | `True` | Expose method via REPL |
+
+### Class-Level Defaults
+
+Set default channel availability at class level:
+
+```python
+class CliOnlyEndpoint(BaseEndpoint):
+    """Endpoint exposed only via CLI by default."""
+
+    name = "tools"
+    _default_api = False  # All methods CLI-only by default
+
+    async def cleanup(self) -> dict:
+        """CLI-only (inherits class default)."""
+        return {"ok": True}
+
+    @endpoint(api=True)  # Override: also expose via API
+    async def status(self) -> dict:
+        """Available on both CLI and API."""
+        return {"running": True}
+```
+
+**Available class defaults:**
+
+- `_default_api = True` - Expose via REST API
+- `_default_cli = True` - Expose via CLI
+- `_default_repl = True` - Expose via REPL
+- `_default_post = False` - Use POST method
 
 ### Extending Base Endpoints
 
 ```python
 # src/genro_myproxy/entities/account/endpoint.py
 from genro_proxy.entities.account import AccountEndpoint
-from genro_proxy.interface.endpoint_base import POST
+from genro_proxy.interface import endpoint
 
 
 class MyAccountEndpoint(AccountEndpoint):
     """Extended account endpoint with SMTP-specific parameters."""
 
-    @POST
+    @endpoint(post=True)
     async def add(
         self,
         tenant_id: str,
@@ -456,14 +534,80 @@ Methods are introspected to generate API routes and CLI commands:
 | Method | HTTP | CLI |
 |--------|------|-----|
 | `async def list(self, tenant_id: str)` | `GET /api/my_entities/list?tenant_id=X` | `myproxy my-entities list X` |
-| `@POST async def add(self, ...)` | `POST /api/my_entities/add` | `myproxy my-entities add ...` |
+| `@endpoint(post=True) async def add(self, ...)` | `POST /api/my_entities/add` | `myproxy my-entities add ...` |
+| `@endpoint(api=False) async def serve(...)` | Not exposed | `myproxy my-entities serve ...` |
 
 **Rules:**
 
-- Methods without `@POST` → GET (params from query string)
-- Methods with `@POST` → POST (params from JSON body)
+- Methods without `@endpoint(post=True)` → GET (params from query string)
+- Methods with `@endpoint(post=True)` → POST (params from JSON body)
 - Method names with `_` → CLI uses `-` (e.g., `add_batch` → `add-batch`)
 - `tenant_id` is special: becomes optional positional argument in CLI with context fallback
+
+---
+
+## ProxyEndpoint
+
+`ProxyEndpoint` provides server/instance process management commands. Subclass it to add custom proxy-level commands.
+
+### Subclassing ProxyEndpoint
+
+```python
+# src/genro_myproxy/proxy.py
+from genro_proxy import ProxyEndpoint
+from genro_proxy.interface import endpoint
+
+
+class MyProxyEndpoint(ProxyEndpoint):
+    """Extended proxy endpoint with custom commands."""
+
+    name = "myproxy"  # Optional: override default "proxy" name
+
+    @endpoint(api=False)  # CLI-only
+    async def init_db(self, force: bool = False) -> dict:
+        """Initialize database schema."""
+        # Custom initialization logic
+        return {"ok": True, "tables_created": 5}
+
+    async def version(self) -> dict:
+        """Return proxy version info."""
+        return {"version": "1.0.0", "name": "MyProxy"}
+
+    @endpoint(post=True)
+    async def reload_config(self) -> dict:
+        """Reload configuration from disk."""
+        # Reload logic
+        return {"ok": True, "reloaded": True}
+```
+
+### Built-in ProxyEndpoint Methods
+
+| Method | Description | Default Channels |
+|--------|-------------|------------------|
+| `serve(name, host, port, background)` | Start server instance | CLI only |
+| `stop(name, force)` | Stop running instance(s) | CLI + API |
+| `restart(name, force)` | Restart instance(s) | CLI + API |
+| `list_instances()` | List all configured instances | CLI + API |
+
+### CLI Commands from ProxyEndpoint
+
+```bash
+# Start server
+myproxy proxy serve default --port 8000
+
+# List instances
+myproxy proxy list-instances
+
+# Stop instance
+myproxy proxy stop dev-instance
+
+# Stop all instances
+myproxy proxy stop "*"
+
+# Custom commands from your subclass
+myproxy myproxy init-db --force
+myproxy myproxy version
+```
 
 ---
 
