@@ -39,6 +39,8 @@ import secrets
 import signal
 import subprocess
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -74,6 +76,11 @@ class ProxyEndpoint(BaseEndpoint):
         # ProxyEndpoint doesn't use a table, pass None
         super().__init__(table=None)
         self.proxy = proxy
+
+    @asynccontextmanager
+    async def _connection(self) -> AsyncIterator[None]:
+        """No-op connection context for ProxyEndpoint (no database)."""
+        yield
 
     # -------------------------------------------------------------------------
     # Private helpers for instance/process management

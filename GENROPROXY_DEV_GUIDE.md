@@ -6,7 +6,7 @@ This document contains **mandatory rules and patterns** for projects that use `g
 
 ```markdown
 **genro-proxy Dependency**: This project uses genro-proxy. Read and follow:
-[CLAUDE_FOR_GENROPROXY_USERS.md](https://github.com/softwellsrl/meta-genro-modules/blob/main/sub-projects/genro-proxy/CLAUDE_FOR_GENROPROXY_USERS.md)
+[GENROPROXY_DEV_GUIDE.md](https://github.com/softwellsrl/meta-genro-modules/blob/main/sub-projects/genro-proxy/GENROPROXY_DEV_GUIDE.md)
 ```
 
 ---
@@ -589,6 +589,38 @@ class MyProxyEndpoint(ProxyEndpoint):
 | `restart(name, force)` | Restart instance(s) | CLI + API |
 | `list_instances()` | List all configured instances | CLI + API |
 
+### Database Connection Override
+
+`ProxyEndpoint` doesn't use a database table. It overrides the `_connection()` method to provide a no-op context:
+
+```python
+class ProxyEndpoint(BaseEndpoint):
+    def __init__(self, proxy: ProxyBase):
+        super().__init__(table=None)  # No table
+        self.proxy = proxy
+
+    @asynccontextmanager
+    async def _connection(self) -> AsyncIterator[None]:
+        """No-op connection context (no database)."""
+        yield  # No DB transaction
+```
+
+When subclassing `ProxyEndpoint` with methods that **do need** database access, override `_connection()`:
+
+```python
+class MyProxyEndpoint(ProxyEndpoint):
+    @asynccontextmanager
+    async def _connection(self) -> AsyncIterator[None]:
+        """Use proxy's database connection."""
+        async with self.proxy.db.connection():
+            yield
+
+    async def stats(self) -> dict:
+        """Method that needs DB access."""
+        # This works because _connection() uses proxy.db
+        return await self.proxy.db.table("stats").select()
+```
+
 ### CLI Commands from ProxyEndpoint
 
 ```bash
@@ -938,4 +970,4 @@ class MyEndpoint(BaseEndpoint):
 
 ---
 
-**Last Updated**: 2025-02-04
+**Last Updated**: 2026-02-05

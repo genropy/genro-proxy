@@ -42,7 +42,8 @@ from __future__ import annotations
 import importlib
 import inspect
 import pkgutil
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, get_origin, get_type_hints
 
 from pydantic import create_model
@@ -386,6 +387,16 @@ class BaseEndpoint:
             return (annotation, ...)  # Required field
         return (annotation, default)
 
+    @asynccontextmanager
+    async def _connection(self) -> AsyncIterator[None]:
+        """Provide database connection context for invoke().
+
+        Subclasses can override to provide different behavior
+        (e.g., ProxyEndpoint yields without DB connection).
+        """
+        async with self.table.db.connection():
+            yield
+
     async def invoke(
         self,
         method_name: str,
@@ -422,7 +433,7 @@ class BaseEndpoint:
             raise ValueError(f"Method '{method_name}' not found on {self.name}")
 
         # Call method within transaction (auto commit/rollback)
-        async with self.table.db.connection():
+        async with self._connection():
             # Resolve tenant_id from token if needed (non-admin token)
             if api_token and not is_admin and "tenant_id" not in params:
                 tenant_id = await self._resolve_tenant_from_token(api_token)
