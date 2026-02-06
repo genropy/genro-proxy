@@ -227,7 +227,7 @@ class ProxyBase:
 | `created_at` | TIMESTAMP | |
 | `updated_at` | TIMESTAMP | |
 
-**Metodi base**: `get()`, `add()`, `remove()`, `list_all()`, `update_fields()`, `ensure_default()`, `create_api_key()`, `get_tenant_by_token()`
+**Metodi base**: `get()`, `add()`, `remove()`, `list_all()`, `update_fields()`, `create_api_key()`, `get_tenant_by_token()`
 
 ---
 

@@ -50,13 +50,6 @@ class TenantsTable(Table):
         record["api_key_hash"] = hashlib.sha256(api_key.encode()).hexdigest()
         record["_api_key"] = api_key  # Transient field, returned once
 
-    async def ensure_default(self) -> None:
-        """Ensure the 'default' tenant exists for CE single-tenant mode."""
-        async with self.record_to_update("default", insert_missing=True) as rec:
-            if not rec.get("name"):
-                rec["name"] = "Default Tenant"
-                rec["active"] = 1
-
     async def create_api_key(
         self, tenant_id: str, expires_at: int | None = None
     ) -> str:

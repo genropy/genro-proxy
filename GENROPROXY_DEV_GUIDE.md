@@ -139,9 +139,7 @@ class MyProxy(ProxyBase):
     async def init(self) -> None:
         """Initialize proxy."""
         await super().init()
-        # Add your custom initialization (e.g., ensure default tenant)
-        async with self.db.connection():
-            await self.db.table("tenants").ensure_default()
+        # Add your custom initialization here
 ```
 
 ### 2. Create the Server Entry Point

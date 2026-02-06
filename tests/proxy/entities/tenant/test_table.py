@@ -37,45 +37,6 @@ class TestDecodeActive:
         assert result["active"] is True
 
 
-class TestEnsureDefault:
-    """Tests for TenantsTable.ensure_default() method."""
-
-    async def test_creates_default_tenant(self, tenant_table: TenantsTable):
-        """Creates default tenant if not exists."""
-        await tenant_table.ensure_default()
-
-        tenant = await tenant_table.record(where={"id": "default"})
-        assert tenant is not None
-        assert tenant["id"] == "default"
-        assert tenant["name"] == "Default Tenant"
-        assert tenant["active"] == 1
-
-    async def test_does_not_overwrite_existing(self, tenant_table: TenantsTable):
-        """Does not overwrite existing default tenant with custom name."""
-        await tenant_table.insert({
-            "id": "default",
-            "name": "Custom Default",
-            "active": 1,
-        })
-
-        await tenant_table.ensure_default()
-
-        tenant = await tenant_table.record(where={"id": "default"})
-        assert tenant is not None
-        assert tenant["name"] == "Custom Default"
-
-    async def test_sets_name_if_missing(self, tenant_table: TenantsTable):
-        """Sets name if default exists but name is empty."""
-        await tenant_table.insert({"id": "default", "name": "", "active": 0})
-
-        await tenant_table.ensure_default()
-
-        tenant = await tenant_table.record(where={"id": "default"})
-        assert tenant is not None
-        assert tenant["name"] == "Default Tenant"
-        assert tenant["active"] == 1
-
-
 class TestTenantsTableWithConfig:
     """Tests for TenantsTable with config field."""
 
