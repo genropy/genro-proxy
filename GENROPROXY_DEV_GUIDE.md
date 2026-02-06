@@ -714,17 +714,71 @@ POST /api/accounts/delete             # JSON body
 
 ### Authentication
 
-Authentication is via `X-API-Token` header:
+**All API calls require a token** via the `X-API-Token` header (unless auth is disabled).
 
-- **Admin token**: Full access (configured via `GENRO_PROXY_API_TOKEN`)
-- **Tenant token**: Access restricted to own tenant (via `tenants.api_key_hash`)
+There are two token types with different access levels:
+
+#### Admin Token
+
+Configured via `GENRO_PROXY_API_TOKEN` env var or `api_token` in ProxyConfigBase. Provides full access to all resources and all tenants.
+
+```bash
+# Admin: full access, must pass tenant_id explicitly
+curl -H "X-API-Token: $ADMIN_TOKEN" \
+     "http://localhost:8000/api/accounts/list?tenant_id=acme"
+
+# Admin: create tenant
+curl -X POST -H "X-API-Token: $ADMIN_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"id": "acme", "name": "Acme Corp"}' \
+     "http://localhost:8000/api/tenants/add"
+```
+
+#### Tenant Token
+
+Generated per-tenant via `create_api_key()`. Access is restricted to the tenant's own resources. The `tenant_id` is resolved automatically from the token — no need to pass it.
+
+```bash
+# Tenant: tenant_id resolved automatically from token
+curl -H "X-API-Token: $ACME_TOKEN" \
+     "http://localhost:8000/api/accounts/list"
+
+# Tenant: cannot access other tenants or admin endpoints
+curl -H "X-API-Token: $ACME_TOKEN" \
+     "http://localhost:8000/api/tenants/list"  # → 403 Forbidden
+```
+
+#### Creating Tenant Tokens
 
 ```python
-# Create tenant API key
+# Via code
 async with proxy.db.connection():
     api_key = await proxy.db.table("tenants").create_api_key("acme")
     # Store api_key securely - only returned once!
+
+# Via API (admin only)
+curl -X POST -H "X-API-Token: $ADMIN_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"tenant_id": "acme"}' \
+     "http://localhost:8000/api/tenants/create-api-key"
+
+# Via CLI
+myproxy tenants create-api-key acme
 ```
+
+#### Open Access (Development)
+
+When `api_token` is not configured (None), all endpoints are accessible without authentication. This is for development only.
+
+#### Auth Flow Summary
+
+1. Request arrives with `X-API-Token` header
+2. If token matches admin token → full access, `is_admin=True`
+3. If token is not admin → stored for later DB verification
+4. Inside `invoke()`, non-admin tokens are checked against `tenants.api_key_hash`
+5. If valid tenant token → `tenant_id` injected automatically into params
+6. If invalid token → `401 Unauthorized`
+7. Tenant tokens on admin-only endpoints → `403 Forbidden`
 
 ### Custom API Routes
 

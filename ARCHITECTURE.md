@@ -144,6 +144,23 @@ Copiare e generalizzare:
 - `cli_base.py` → `CliBase` con parametri configurabili
 - `endpoint_base.py` → `BaseEndpoint` con autodiscovery parametrizzato
 
+#### Autenticazione API
+
+Tutte le route `/api/*` richiedono il header `X-API-Token`. Due livelli di accesso:
+
+- **Admin token** (`api_token` in ProxyConfigBase): accesso completo a tutte le risorse e tenant. Il `tenant_id` va passato esplicitamente nelle richieste.
+- **Tenant token** (generato via `create_api_key()`): accesso ristretto al proprio tenant. Il `tenant_id` viene risolto automaticamente dal token in `invoke()`.
+
+Flusso di autenticazione:
+
+1. `require_token()` verifica il token admin (confronto stringa, no DB)
+2. Se non è admin, il token viene passato a `invoke()` come `api_token`
+3. `invoke()` apre la connessione DB e chiama `_resolve_tenant_from_token()`
+4. Se il token corrisponde a un tenant valido, `tenant_id` viene iniettato nei params
+5. Endpoint admin-only usano `require_admin_token()` che rifiuta i token tenant con 403
+
+Senza `api_token` configurato: accesso aperto (solo per sviluppo).
+
 ---
 
 ### 5. ProxyBase e ProxyConfig
