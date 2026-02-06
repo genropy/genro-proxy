@@ -657,6 +657,22 @@ myproxy accounts get acme main
 myproxy accounts delete acme main
 ```
 
+### JSON Parameters via CLI
+
+Parameters annotated as `dict` or `list` (including `Optional` variants) can be passed as JSON strings from the CLI. `invoke()` automatically parses them before Pydantic validation.
+
+```bash
+# Pass a dict parameter as JSON string
+myproxy storages add acme local --config '{"base_path": "/data/files"}'
+
+# Pass nested config
+myproxy my-entities add acme e1 --config '{"key": "value", "nested": {"a": 1}}'
+```
+
+This works for any method parameter typed as `dict`, `list`, `dict[str, Any]`, `list[str]`, `Optional[dict]`, etc.
+
+If the JSON string is malformed, Pydantic will report the validation error.
+
 ### Custom CLI Commands
 
 Add custom commands in `CliManager`:
@@ -968,4 +984,4 @@ class MyEndpoint(BaseEndpoint):
 
 ---
 
-**Last Updated**: 2026-02-05
+**Last Updated**: 2026-02-06
