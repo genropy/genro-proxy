@@ -41,10 +41,11 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import json
 import pkgutil
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Any, get_args, get_origin, get_type_hints
 
 from pydantic import create_model
 
@@ -350,7 +351,7 @@ class BaseEndpoint:
     def _is_complex_type(self, ann: Any) -> bool:
         """Check if annotation is a complex type (list, dict, or contains them)."""
         import types
-        from typing import Union, get_args
+        from typing import Union
 
         if ann in (list, dict):
             return True
@@ -397,6 +398,31 @@ class BaseEndpoint:
         async with self.table.db.connection():
             yield
 
+    def _coerce_json_params(self, method_name: str, params: dict[str, Any]) -> None:
+        """Parse JSON strings into dict/list for parameters that expect them.
+
+        CLI passes all values as strings. When a method parameter is annotated
+        as dict or list (including Optional variants), and the value is a string,
+        attempt JSON parsing in-place.
+        """
+        method = getattr(self, method_name)
+        try:
+            hints = get_type_hints(method)
+        except Exception:
+            return
+
+        for param_name, value in params.items():
+            if not isinstance(value, str):
+                continue
+            ann = hints.get(param_name)
+            if ann is None:
+                continue
+            if self._is_complex_type(ann):
+                try:
+                    params[param_name] = json.loads(value)
+                except (json.JSONDecodeError, TypeError):
+                    pass  # Let Pydantic report the validation error
+
     async def invoke(
         self,
         method_name: str,
@@ -439,6 +465,9 @@ class BaseEndpoint:
                 tenant_id = await self._resolve_tenant_from_token(api_token)
                 if tenant_id:
                     params["tenant_id"] = tenant_id
+
+            # Parse JSON strings for dict/list params (CLI passes strings)
+            self._coerce_json_params(method_name, params)
 
             # Create and validate with Pydantic model
             model_class = self.create_request_model(method_name)
